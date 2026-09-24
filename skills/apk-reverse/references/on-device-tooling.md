@@ -6,10 +6,13 @@ is no laptop in the loop. This file covers the **on-device toolchain** and — m
 when each tool beats its PC counterpart and when it does not.
 
 Evidence basis: the facts below come from a real configured environment (Android 11, Magisk +
-Zygisk, LSPosed v1.9.2, MT Manager 2.26.9), archived in `tools/_phone-modules/`. Framework
+Zygisk, LSPosed v1.9.2, MT Manager 2.26.9). Framework
 activation and the module set are `observed` there; per-workflow usability notes are `measured`
 where marked, otherwise `inferred`. The MT MCP tool surface is from MT's official documentation
-(`observed` as a list; live invocation requires the service to be running — see §2).
+(`observed` as a list; live invocation requires the service to be running — see).
+
+
+**Load this when:** the work is better done on the phone than on the PC -- one-string edits, an already-installed target, or no laptop in the loop. It gives MT Manager edit/repack/sign and its APK MCP surface, LSPosed Manager, and Termux.
 
 ## 1. MT Manager as a reverse-engineering workbench
 
@@ -87,7 +90,7 @@ code 2 — usable as a loop check ("is it up yet") while you start it by hand. `
 LSPosed (via Zygisk) gives you a **Java-layer hook platform that needs no PC at runtime**: write/
 install a module once, and it applies to target apps at every launch.
 
-Facts from the reference environment (`observed`, archived in `tools/_phone-modules/`):
+Facts from the reference environment (`observed`):
 
 - Activation is verifiable from logs: the `ZygiskCompanion: welcome to LSPosed!` banner, the
   version line, the `lspd` daemon process running as system.
@@ -115,7 +118,7 @@ The phone can run the whole dynamic stack alone: Termux (or a plain root shell) 
 - **Disguise the server when the target hunts it**: a renamed binary and a non-default port are
   the minimum; a detection-savvy target scans process names and default ports. The reference
   environment carried renamed server copies from prior work — the technique is standard, and the
-  detection mechanics are `kernel-and-environment-hardening.md` §1.
+  detection mechanics are `kernel-and-environment-hardening.md`.
 - **32/64-bit**: a `zygote64_32` device runs both ABIs; make sure the frida-server architecture
   matches the process you are attaching to (`environment.md` §which architecture is actually
   executing).

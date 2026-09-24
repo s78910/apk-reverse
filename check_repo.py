@@ -45,7 +45,7 @@ NAMED_PATH_RE = re.compile(
 BARE_PATH_RE = re.compile(r'(?<![\w/])(?P<sub>references|scripts)/'
                           r'(?P<file>[A-Za-z0-9_\-]+\.(?:md|py|js))')
 
-fail = []
+fail: list[str] = []
 
 
 def read(path):
@@ -150,8 +150,13 @@ def check_scripts(skill_dir):
             print('  FAIL %s' % name)
             continue
         run = subprocess.run([sys.executable, '-B', path, '--help'],
-                             capture_output=True, text=True, timeout=60,
-                             cwd=ROOT)
+                             capture_output=True, timeout=60, cwd=ROOT,
+                             # Decode explicitly. `text=True` alone uses the *locale* encoding, which
+                             # on a Chinese Windows console is GBK: a script printing an em dash in a
+                             # usage line then fails to decode, and this gate reports it as a crash.
+                             # That is a defect in the gate, not in the script -- measured on this
+                             # repository, where `dex_strpatch.py --help` was reported as crashed.
+                             encoding='utf-8', errors='replace')
         # A script may exit non-zero on --help under the "print usage, exit 2"
         # convention. That is acceptable; a traceback is not.
         crashed = 'Traceback (most recent call last)' in (run.stderr or '')
@@ -192,17 +197,33 @@ def check_references(name, skill_dir, root_docs):
             print('  MISSING %s' % x)
         fail.extend(missing)
 
-    # Reachability: nothing may be orphaned from the skill entry point.
+    # Reachability: nothing may be orphaned from the entry point.
+    #
+    # The registration surface is SKILL.md **plus** `references/routing.md`, because this repository
+    # splits the two: SKILL.md keeps the symptom index (symptom -> file must stay one hop) and the
+    # reference/script inventory lives in the routing file, which `check_routing.py` in turn proves
+    # names every reference and every script. Reading only SKILL.md here would report a correctly
+    # registered file as orphaned -- and did, for every file added after that split.
+    routing = os.path.join(ref_dir, 'routing.md')
     bodies = read(os.path.join(skill_dir, 'SKILL.md')) + root_docs
+    if os.path.isfile(routing):
+        bodies += read(routing)
     for f in sorted(refs):
         if f.endswith('.md') and f not in bodies:
-            fail.append('%s: references/%s is not mentioned anywhere' % (name, f))
+            fail.append('%s: references/%s is named neither in SKILL.md, README.md nor '
+                        'references/routing.md' % (name, f))
             print('  UNLISTED references/%s' % f)
 
     all_docs = bodies
     for f in sorted(refs):
         if f.endswith('.md'):
             all_docs += read(os.path.join(ref_dir, f))
+    for sub in ('', 'coverage', 'precedents'):
+        d = os.path.join(ref_dir, sub) if sub else ref_dir
+        if os.path.isdir(d):
+            for f in sorted(os.listdir(d)):
+                if f.endswith('.md') and os.path.isfile(os.path.join(d, f)):
+                    all_docs += read(os.path.join(d, f))
     for s in sorted(scripts):
         if s.endswith(('.py', '.js')) and s not in all_docs:
             fail.append('%s: scripts/%s is undocumented' % (name, s))
@@ -235,6 +256,67 @@ def check_readme():
         print('  BARE PATH %s' % m.group(0))
 
 
+def check_leaks():
+    """No target identity on the committed surface.
+
+    Path resolution, anchors and layout are all *structural* checks: they pass on a file that names
+    a live app and a real phone. This one reads content, and it is deliberately not reimplemented
+    here -- `scripts/scan_leaks.py` owns the rules and their exemption list, so there is one place
+    to argue with. The tracked-file list is passed in so a git-ignored work area (which may
+    legitimately hold real identifiers) can never produce a finding.
+
+    A scanner error is reported as a note rather than a failure: an unreadable rule table is a
+    broken tool, not a leak, and conflating the two teaches people to ignore this line.
+    """
+    scanner = os.path.join(SKILLS_DIR, 'apk-reverse', 'scripts', 'scan_leaks.py')
+    if not os.path.isfile(scanner):
+        print('  SKIP no scan_leaks.py (the leak gate is not installed)')
+        return
+    import subprocess
+    import tempfile
+    proc = subprocess.run(['git', 'ls-files'], cwd=ROOT, capture_output=True,
+                          encoding='utf-8', errors='replace')
+    if proc.returncode != 0 or not proc.stdout.strip():
+        print('  SKIP git ls-files unavailable (not a checkout?)')
+        return
+    with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, encoding='utf-8') as fh:
+        fh.write(proc.stdout)
+        listing = fh.name
+    try:
+        run = subprocess.run([sys.executable, scanner, '--root', ROOT,
+                              '--files-from', listing, '--max', '10'],
+                             capture_output=True, encoding='utf-8', errors='replace')
+    finally:
+        os.unlink(listing)
+    token = (run.stdout or '').strip().splitlines()
+    token = token[-1] if token else ''
+    if run.returncode == 2 or 'RESULT=error' in token:
+        print('  NOTE scan_leaks.py could not complete: %s' % (run.stderr or '').strip()[:160])
+        return
+    if run.returncode == 0:
+        print('  no strong target identity on the tracked surface (%s)' % (token or 'RESULT=clean'))
+        return
+    # Non-zero: report the findings, which carry their own context. The scanner prints each hit as
+    # "<file>:<line>:<col>  [<category>/<strength>]  <rule>", followed by its indented match/context
+    # lines. The list below keeps only the strong hits -- a weak hit is the scanner's business, not
+    # this gate's -- but a weak hit sitting between two strong ones may contribute its context pair,
+    # because attributing an indented line to the hit above it is heuristic. The exit code is the
+    # verdict; this block is for the reader.
+    print('  LEAK scan_leaks.py reported strong findings on the tracked surface:')
+    keep_detail = False
+    for line in (run.stdout or '').splitlines():
+        stripped = line.strip()
+        if re.search(r'\[(package|device|token|appkey|path)/(strong|certain)\]', stripped):
+            print('    %s' % stripped)
+            keep_detail = True
+        elif stripped.startswith('[') and stripped.count(']') >= 2:
+            keep_detail = False
+        elif keep_detail and (stripped.startswith('match:') or stripped.startswith('context:')):
+            print('      %s' % stripped)
+    fail.append('leak scan: strong target identity on the tracked surface '
+                '(run: python skills/apk-reverse/scripts/scan_leaks.py)')
+
+
 def main():
     skills = discover_skills()
     print('== skills discovered ==')
@@ -260,6 +342,9 @@ def main():
 
     print('\n== README paths are explicit and exist ==')
     check_readme()
+
+    print('\n== tracked surface carries no target identity ==')
+    check_leaks()
 
     print('\n== result: %d problem(s) ==' % len(fail))
     for f in fail:

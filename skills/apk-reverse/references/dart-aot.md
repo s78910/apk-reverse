@@ -24,10 +24,21 @@ print(m.group(1).decode() if m else 'not found')   # e.g. b'3.9.0 (stable) (Mon 
 If the string is absent, fall back to the snapshot hash the loader reports at runtime, or to the
 engine build id in `libflutter.so`'s version string.
 
+**The regex above can return a version-shaped lie — assert the shape, do not just take the digits.**
+Measured exception, on a real `libflutter.so`: the full banner string is
+`0.0.1                                            on "android_arm64"` — a 66-byte engine version
+record whose numeric field is `0.0.1` and whose **64-character build-id field is blank**, with no
+`(stable)` marker and no `(Mon …)` timestamp at all. Anchoring only on `\d+\.\d+\.\d+` matches the
+truncated prefix of a banner that was never populated. The discriminator that works: find the
+` on "<arch>"` suffix, take the version string from the preceding NUL, and check that a
+`(stable) (…)` tail is actually present **before** feeding the number to a VM-compiling tool
+(§2's Route B). If it is missing, you cannot pin the version from this file — say so and use the
+snapshot hash or a structural probe (§2's Route A), rather than building a decompiler for `0.0.1`.
+
 ## 2. Get a decompiler that matches that version
 
 You need a tool that resolves the snapshot container — something that turns `libapp.so` into named
-functions, class layouts and, above all, a **pool listing with `pp+0x…` offsets**. Everything in §4
+functions, class layouts and, above all, a **pool listing with `pp+0x…` offsets**. Everything in
 onward consumes that listing; without it the workflow cannot start, and no script in this skill can
 produce it (see §4 for why the mapping is not recoverable from the binary alone).
 
@@ -69,6 +80,17 @@ release artifacts, so there is nothing prebuilt to fetch for a given Dart versio
   `build/blutter_dartvm<ver>_<os>_<arch>`) and try again; on the sample above the fault never
   reproduced after a relink — including for the unchanged binary — and three subsequent runs each
   completed in ~5.9 s. **One retry, then a relink, before you blame the target.**
+- **Two Windows build failures that are not your target's fault, both measured `~0.2 h` each.**
+  *The compiler is not found even though `vcvars64` ran*: `%PATH%` expands when `cmd` parses the
+  line, so a `set PATH=...;%PATH%` in the same command overwrites the environment `vcvars` just
+  installed. Use delayed expansion (`cmd /V:ON` with `set PATH=...;!PATH!`) or run `vcvars64` in a
+  separate `cmd` invocation. *`string(REPLACE "/EHsc" ...)` aborts with "not enough arguments"*:
+  the `REPLACE` call is unguarded, so it breaks when `CMAKE_CXX_FLAGS` is empty — add an
+  `if(CMAKE_CXX_FLAGS)` guard, and patch **both** the template and the generated copy, or the next
+  configure regenerates the broken one. A prebuilt binary offered by a mirror is not a shortcut if
+  it is built for `aarch64`-Linux (the Termux target): check its ELF machine before spending time on
+  it — that mismatch cost `1 h` on the precedent this section is derived from, against `0.2 h` for
+  either compile fix above.
 
 Outputs of interest (blutter):
 
@@ -92,7 +114,7 @@ Outputs of interest (blutter):
 > disassembly source.
 
 **`product` builds carry no debug info.** Expect `no-code_comments`, no function names, and
-obfuscated identifiers. That is normal; the strings still survive (see §7). Note this is a *format*
+obfuscated identifiers. That is normal; the strings still survive (see). Note this is a *format*
 floor, not a tooling gap: the Dart compiler drops field names outside debug builds, so roughly
 97-99% of instance field names are simply absent, and local/captured variable names are gone
 entirely. Accessor-based recovery (`get:`/`set:` still carry the name) recovers part of the field
@@ -143,7 +165,7 @@ library has no code". If you need capstone here, start at a known function addre
 `skipdata=True`, and treat an implausibly small count as a decoding problem before you treat it as a
 property of the file.
 
-The same mask-based argument applies to building a call graph (§9): decode `B`/`BL` arithmetically
+The same mask-based argument applies to building a call graph (): decode `B`/`BL` arithmetically
 rather than by sweeping.
 
 **A live example of why the index's completeness matters:** after this file's advice to "count the
@@ -161,7 +183,7 @@ Stable across Dart 3.x arm64 AOT. Verify once on a known function, then rely on 
 | `x27` | **object pool base (PP)** — every constant/string/type load goes through it |
 | `x26` | current thread (`[x26,#0x38]` stack limit, `[x26,#0x68]` isolate group) |
 | `x28` | heap base — how compressed pointers are decompressed |
-| `x22` | **null/base for booleans** (see §6) |
+| `x22` | **null/base for booleans** (see) |
 | `x15` | Dart's own stack pointer (not the system SP) |
 | `x21` | class dispatch table (virtual calls load a target from it) |
 
@@ -212,6 +234,40 @@ Consequences that decide whether your search works:
 python dart_pool_strings.py libapp.so strings.tsv --min 3
 ```
 
+### The 32-bit ABI does not use this format — and the tool will say so
+
+**On a 32-bit (`armeabi-v7a`) snapshot the packed tag scheme above does not exist, and the string
+table is not laid out as a walkable chain at all.** `dart_pool_strings.py` enforces the chaining
+constraint, so on armv7 it reports `kept (run >= 3): 0` — every candidate is isolated and discarded.
+That zero is a **format mismatch, not an empty string table**: the same extractor over the arm64
+snapshot of the same app kept 4,980 chained entries. Do not read the armv7 zero as "the strings were
+stripped".
+
+Measured on one app shipped with both ABIs (arm64 16,352,152 B / armv7 17,629,776 B):
+
+| ABI | Where a literal sits | How to find it |
+|---|---|---|
+| arm64 | inside the packed string table, `[0x80\|(len<<1)][payload]` | `dart_pool_strings.py`; the chain constraint makes it reliable |
+| armv7 | **inline in the read-only data**, as its own record | a plain ASCII search for the literal — it is *not* UTF-16, so a byte search is the whole method |
+
+For armv7, the record a literal sits in is **4-byte aligned** and reads
+`[header u32][length u32le][SAFE payload]`, where `length` is the **byte** count of the payload
+(measured: an ASCII literal 12 chars long carried `12`, and a 70-char literal carried `70`). The
+header u32 is a class/tags word that varies between snapshots — on the sample above it took the
+values `0x00550238` and `0x00560238`, both 4-byte aligned, 13,397 occurrences. Treat the header as
+a **validator, not a constant**: assert `length == payload length` and that the payload is
+all-printable, then read the header word from the file rather than hard-coding it. Scanning the whole
+17.6 MB image at 4-byte stride costs **0.94 s**, so validating every candidate is affordable.
+
+Consequence for patching: because the armv7 payload is **UTF-8 and length-explicit**, an equal-length
+ASCII replacement is legal on both ABIs without recomputing the tag — the one-byte tag encodes the
+length only on arm64, which is why the same patch script can serve both if it asserts the prefix it
+found instead of assuming which encoding it is looking at.
+
+**Patch every ABI the app ships, or the device may run the one you left alone.** A phone that
+prefers `arm64-v8a` still has the `armeabi-v7a` snapshot on disk, and a build that patches only one
+of them is a controlled experiment, not a deliverable.
+
 ## 8. Reading AOT code: three signatures that carry most of the weight
 
 Once you can disassemble a window with pool annotations, most business logic resolves into these
@@ -254,7 +310,7 @@ Use this to find function boundaries when you need to delimit one.
 1. **Anchor on a string.** Search the pool for the shortest distinctive token — a field name, an
    endpoint path, a label. Prefer identifiers over sentences (a sentence may be assembled from
    fragments).
-2. **Find its referencing instructions** via your index (§4).
+2. **Find its referencing instructions** via your index ().
 3. **Disassemble a window** around each reference with pool annotations:
    ```
    python dart_disasm.py libapp.so --pp pp.txt --refs pp_refs.json 0x26e390
@@ -289,6 +345,26 @@ Use this to find function boundaries when you need to delimit one.
 - **`libapp.so` inside an APK is usually deflate-compressed**, so in-place byte patching of the zip
   entry is not possible — patch the extracted file, then replace the whole entry
   (`repack-and-sign.md`).
+- **Replacing a string in place is safe; replacing the *wrong* string is not.** The highest-value
+  equal-length target on a server-driven app is a **data key** — a JSON field name, a slot key, a
+  reporting label. Rename it to equal-length noise and the client looks up a key the server never
+  sends, so the feature goes quiet while every other request keeps working. This is the cheapest
+  surgical form of the "do not make an API fail" constraint at the top level of `SKILL.md`: the
+  request still succeeds, only the client's interpretation of it changes.
+- **Never replace an API path or URL string.** It looks like the same kind of string and it is not.
+  Measured failure, on a real build: replacing the ad-fetch path produced a **404 whose error body is
+  not valid JSON**, the app's startup flow called `jsonDecode` on it, `FormatException` propagated
+  out of the Future that builds the home screen, and the app **stayed on the launch logo forever** —
+  `logcat` showed only `E flutter`. The ad did disappear; so did the app. Isolate it the way that
+  case did: a **re-sign-only control** (no string edits) plus `adb logcat -d | grep "E flutter"`, so
+  a startup failure is attributable to the patch rather than to the packer. Full precedent:
+  `references/precedents/`.
+- **Longest string first when the targets are substrings of each other.** In a byte search
+  `welfare_ad` also matches inside `welfare_ad_top`, and `ad_click:` inside `ad_click:exp`; replacing
+  the short one first corrupts the longer entry. Sort candidates by descending length, and assert the
+  prefix byte you expect **immediately before** each hit — on arm64 that byte is `0x80|(len<<1)`, on
+  armv7 the length is the u32 immediately before the payload — so a hit that lands mid-string is
+  rejected instead of patched.
 
 ## 11. Traps specific to this layer
 
@@ -306,7 +382,7 @@ Use this to find function boundaries when you need to delimit one.
   referenced exactly once, at a site that stores a constant into a map that is then sent, the client
   is *reporting* a value — changing it does not change local behaviour. Confirm whether the value is
   ever read before treating it as a gate.
-- **Full-file disassembly is not a debugging tool** (§4). Windowed disassembly is.
+- **Full-file disassembly is not a debugging tool** (). Windowed disassembly is.
 
 ## 12. Verification
 

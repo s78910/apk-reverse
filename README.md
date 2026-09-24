@@ -1,3 +1,27 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner-light.svg" alt="apk-reverse" width="100%">
+  </picture>
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/newliver666/apk-reverse/stargazers"><img src="https://img.shields.io/github/stars/newliver666/apk-reverse?style=flat-square&label=stars&color=49454F" alt="stars"></a>
+  <a href="https://github.com/newliver666/apk-reverse/network/members"><img src="https://img.shields.io/github/forks/newliver666/apk-reverse?style=flat-square&label=forks&color=49454F" alt="forks"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/newliver666/apk-reverse?style=flat-square&color=49454F" alt="license"></a>
+  <img src="https://img.shields.io/badge/python-3.9%2B-49454F?style=flat-square&logo=python&logoColor=white" alt="python">
+  <img src="https://img.shields.io/badge/platform-android-49454F?style=flat-square&logo=android&logoColor=white" alt="android">
+  <a href="https://github.com/newliver666/apk-reverse/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/newliver666/apk-reverse/ci.yml?style=flat-square&label=ci&color=49454F" alt="ci"></a>
+</p>
+
+<p align="center">
+  <a href="#what-it-is-good-at">Capabilities</a> · <a href="#structure">Structure</a> · <a href="#install">Install</a> · <a href="#requirements">Requirements</a> · <a href="#read-this-first">Failure catalogue</a> · <a href="#scope">Scope</a> · <a href="#repository-maintenance">Maintenance</a> · <a href="#disclaimer">Disclaimer</a>
+</p>
+
 # apk-reverse
 
 An Agent Skill for Android APK reverse engineering, debloating, ad removal, surgical
@@ -77,9 +101,9 @@ measurements.
 - Deciding **what the deliverable should be when an APK is not an option** — a repack refused by
   several independent checks is *blocked*, not expensive, and the fallback ladder is a system-level
   module, a local RPC service, or an honest report with a stated boundary.
-- Telling a **real memory dump from an extraction-shell skeleton**, by measuring the trivial-body
-  ratio instead of eyeballing it — and knowing which recovery route applies, including the root-side
-  dump for when `frida` itself is refused by the target.
+- Telling a **real memory dump from an extraction-shell skeleton**, and knowing which recovery route
+  applies — including the root-side dump for when `frida` itself is refused. What the measurement can
+  and cannot see is in `skills/apk-reverse/references/advanced-unpacking.md`.
 - **Calling a routine instead of reversing it** when reversing costs more than invoking: emulated
   execution on the host, or a live function service-ified over Frida RPC.
 - Reading **instruction-level execution evidence** when a native function has been flattened into a
@@ -91,6 +115,21 @@ measurements.
   native-side certificate pinning that ignores the system trust store.
 - Working **from the phone itself**: MT Manager's edit/repack/sign flow and its APK MCP surface,
   LSPosed Manager, and on-device data inspection, alongside the PC toolchain rather than instead of it.
+- Telling **Java2C apart from an extraction shell** before spending hours hunting a decrypted DEX that
+  does not exist at any point in the process lifetime — the code was compiled into a `.so`.
+- Handling a build that arrives as a **split APK / App Bundle set**: reading the set off a device,
+  signing every member with one keystore for `pm install-multiple`, or merging code/native members
+  into a standalone APK when that is legal.
+- Working a **real Dex VMP** with the known-plaintext differential — which links can be automated and
+  which cannot, what a compiled fixture can and cannot reach, and how to *prove* a derived
+  private-opcode table instead of asserting one.
+- **Publishing what it learns without publishing the target** — a scanner that reports identity
+  shapes with their context, an explicit list of what must *not* be redacted (tools, libraries,
+  protocol fields, CVEs, hardening products, public crackmes) because redacting those destroys the
+  reusable part, and exit codes that gate a commit.
+- Reading a **precedent** before repeating work this repository already converged on: the positive
+  half of the record, with the route including its dead ends, a grade on every assertion, and the
+  files the case says to write back to.
 
 ## Structure
 
@@ -185,6 +224,31 @@ references/               loaded on demand, one topic each
   environment.md              device/emulator setup, root, ADB, offline devices, log signals,
                               emulator console control and recovery, preflight, look-at-the-screen
   verification.md             the claim ladder; what "done" means
+  desensitization-and-leak-scans.md
+                              publishing discipline: what must be desensitized and what must stay,
+                              the do-not-anonymize list, the leak scanner and its exit states, and
+                              the entry-point file as a prompt surface
+  precedents/                 the positive case library: route including dead ends, a grade per
+                              assertion, measured pit-falls, and the write-back checklist
+  routing.md                  the on-demand inventory: every reference with when to load it, every
+                              script with what it does, and a mirror of the symptom index
+  rasc-and-droidsaw.md        the Rust re-implementation of the ASC indexer: measured speedup and
+                              identical class sets, the enum shape where it silently drops bodies,
+                              and how to build and verify it
+  evidence-summary.md         the condensation that ships with the skill: capability, one-line
+                              conclusion, strength, and the evidence you can actually open in an
+                              installed copy
+
+  ../evals/                   NOT a spec directory either, but the location the Agent
+                              Skills guidance recommends: `evals.json` holds the
+                              with-skill / without-skill cases this skill has **not** run,
+                              with the method for running them written into the file
+  ../evidence/                NOT a spec directory: the machine-readable companions to the evidence
+                              summary reference above -- `capability-matrix.json` (the same rows with
+                              more fields), `tested-tool-versions.json` (versions and the probe behind
+                              each), `known-limitations.md` (the installer-facing limit list). Shipped
+                              inside the skill so an installed copy can answer "was this verified, and
+                              how strongly" without the repository
   pitfalls.md                 the failure catalogue -- read before building
   advanced-unpacking.md       the dump landed but the bodies are empty: extraction-shell diagnosis by
                               trivial-body ratio, FART-style active invocation and why its classic hooks
@@ -207,6 +271,25 @@ references/               loaded on demand, one topic each
                               gate, and when to stop escalating
   on-device-tooling.md        working from the phone itself: MT Manager edit/repack/sign and its APK MCP,
                               LSPosed Manager, Termux+frida, on-device data inspection
+  java2c-and-jni-sinking.md   Java2C and JNI sinking, the two hardening shapes most easily confused
+                              with an extraction shell: the table that separates landing shell /
+                              extraction shell / VMP / Java2C / JNI sinking, why the code is in the
+                              `.so` and *never* in a dumped dex, and why a `Java_*` symbol search
+                              comes back empty (dynamic registration, `-fvisibility=hidden`)
+  split-apk.md                App Bundle / split APK sets: what the set is, pulling it off a device,
+                              merging into one APK vs signing the set as a unit, the install refusals
+                              and what each means, and making an installable fixture from a pulled set
+  vmp-differential-analysis.md
+                              the known-plaintext differential for a real Dex VMP: which links can be
+                              automated and which cannot (the upload is the bottleneck), the coverage a
+                              compiled fixture can reach, how to *prove* a derived private-opcode
+                              table, smali generation, and when the route is closed
+  coverage-and-limits.md      the claim ladder applied to the skill itself: the evidence behind each
+                              covered item, the dependencies this skill does not ship, and what was
+                              never exercised
+  handoff-boundaries.md       where this skill ends and another discipline begins: the JNI form
+                              table, the packer-versus-loader split, and what "verified" means for
+                              each of the four deliverable forms
 scripts/                  parameterized, path-agnostic
   doctor.py                   run this first: capability report + per-script runnability, finds
                               tools installed off-PATH or as runnable jars, and surfaces the
@@ -242,7 +325,9 @@ scripts/                  parameterized, path-agnostic
   dart_disasm.py              annotated windowed disassembly of Dart AOT code + B/BL caller index
   find_refs.py                count callers of a method before patching it
   repack.py                   rebuild APK, strip only signatures, keep META-INF/services/, write a
-                              4-byte-aligned archive (resources.arsc STORED+aligned), sign, verify
+                              4-byte-aligned archive (resources.arsc STORED+aligned), sign, verify;
+                              also split APK / App Bundle sets: inventory, sign every member with one
+                              keystore, or merge code/native members into a standalone APK
   devsh.py                    quoting-safe ADB shell helper
   usb_net_proxy.py            give an offline device network over USB
   datastore_inject.py         encode/inject AndroidX DataStore preferences safely
@@ -294,7 +379,41 @@ scripts/                  parameterized, path-agnostic
                               with an explicit diagnostic for the measured zero-event case
   mt_mcp_probe.py             probe MT Manager's on-device APK MCP (Streamable HTTP, port 8787):
                               JSON-RPC handshake plus the grouped tool inventory
+  java2c_probe.py             collect the evidence that separates Java2C from an extraction shell, a
+                              VMP and ordinary JNI sinking: native density and stub ratio from the dex,
+                              JNI_OnLoad / dynamic registration / toolchain strings from the `.so`,
+                              each item labelled strong/medium/weak
+  protobuf_decode_raw.py      schema-free protobuf decode: hex / file / stdin to a JSON tree, every
+                              length-delimited field kept as a candidate set with ties labelled rather
+                              than guessed, plus a byte-exact re-encode to check a round trip
+  vmp_diff_harness.py         build a labelled opcode-coverage fixture, derive a candidate private-
+                              opcode map from an original/hardened dex pair, verify the comparison in a
+                              closed loop, and render a restored stream as a smali skeleton
+  kernelsu_syscall_mask.py    generate a KernelSU/APatch syscall-masking scaffold: an installable
+                              userspace module skeleton plus KPM/LKM/eBPF kernel-side templates, each
+                              with its version gate and an explicit unverified label
+  rasc_build.py               build and verify rasc, the Rust ASC re-implementation:
+                              --check what is present, --build clone plus cargo, --verify an APK
+                              against droidasc and fail on any class-set difference
+  scan_leaks.py               scan a repository for target identity before publishing it: bundle ids
+                              in manifest / `pm` / `ps` contexts, serial-shaped tokens, PATs, inline
+                              appkey assignments, literal endpoints, host user paths. Exemptions for
+                              everything that must stay (tools, libraries, CVEs, hardening products,
+                              public crackmes, placeholders), findings carry their context,
+                              `--show-exempt` prints why a hit was suppressed, exit 0/1/2
+  svc_scan.py                 name the syscall behind an inline `svc` and the segment it sits in,
+                              which decides whether a libc-level hook can observe the call at all;
+                              `--context` shows neighbours because a byte scan also matches data
+  anti_detect_probe.js        observer-only Frida probe (patches nothing): path/loader/thread/kill
+                              hooks with caller module + offset, an environment self-report
+                              (`TracerPid`, frida-named mappings), and live streaming so a sub-second
+                              self-destructing target still yields evidence
 ```
+
+The repository also carries an **executable** test layer, which is a different thing from the
+evidence record: `tests/` asserts what the scripts do (unit, CLI contract, no-device
+integration) and `tests/benchmark.md` records what a route did on a real target. `tests/README.md`
+states the split, and `.github/workflows/ci.yml` runs the gates plus the suite.
 
 ## Install
 
@@ -354,6 +473,11 @@ an install that `PATH` does not know about (the common case for `apksigner` and
 
 ## Read this first
 
+**This project is published for learning, research and authorized security testing only.** It ships
+no exploit payloads, no target data and no third-party binaries — it is a method, a set of scripts
+and an evidence record. You are responsible for having the right to analyze whatever you point it at;
+see **Disclaimer** at the end of this file.
+
 `skills/apk-reverse/references/pitfalls.md`. It is the most valuable file here — every entry is a
 failure that produced a broken artifact while looking completely healthy.
 
@@ -383,12 +507,17 @@ tier of documented routes: **module-side delivery** when a repack is blocked,
 **extraction-shell recovery** and its VMP boundary, **emulation and live RPC** for
 calling rather than reading, **instruction-level tracing** against OLLVM, **protocol
 reversing** beyond REST, the **kernel-side route** map for when userspace hooking is
-provably out of reach, and **on-device tooling**. Unity/IL2CPP logic recovery,
+provably out of reach, and **on-device tooling**. A **benchmark pass** then put public
+targets under those routes (`tests/benchmark.md`): it added **Java2C discrimination** (the
+misdiagnosis that sends an agent hunting a decrypted DEX that never exists), **split APK /
+App Bundle handling**, **schema-free protobuf decoding**, a **Dex-VMP differential** harness,
+and **kernel-module templates with their version gates** — and it corrected two earlier claims
+whose measurements disagreed with them. Unity/IL2CPP logic recovery,
 React Native/Hermes bytecode internals, and defeating a server-side authority are **not**
 covered, and the skill is written to say so and stop rather than apply the nearest
 documented procedure to a target it was not written for.
 
-Three qualifications that the Coverage section states in full and that belong here too:
+Four qualifications that the Coverage section states in full and that belong here too:
 
 - **Flutter/Dart AOT analysis has a dependency.** The workflow begins at a pool listing
   (`pp.txt`-class output). Producing that needs a snapshot-decoding decompiler — aotopsy (a static
@@ -402,21 +531,82 @@ Three qualifications that the Coverage section states in full and that belong he
   `docs/tool-verification/EXTENSION-*.md`, one file per topic, with its own strength note. The
   common shape there is *the tool was measured, the route was not* — so read those files before
   treating any of the newer documents as a verified path.
+- **The benchmark pass is recorded per row, with that row's own strength.** `tests/benchmark.md`
+  names each public target, the scripts the row exercises, what actually happened (including the
+  rows that failed and the rows nobody ran), and how strong the evidence is. Rows marked
+  `unverified` are statements about the evidence in this repository, not about the mechanism.
 
 ## Repository maintenance
 
-Three tools live at the root and are not part of the installed skill:
+Four tools live at the root and are not part of the installed skill:
 
 ```
 check_repo.py      every skill discovered, frontmatter valid, scripts runnable,
-                   documented paths resolve, README paths explicit and existing
+                   documented paths resolve, README paths explicit and existing,
+                   and -- on the tracked surface only -- no target identity
+                   (delegates the rules to skills/apk-reverse/scripts/scan_leaks.py
+                   so there is one place to argue with the exemption list)
 check_refs.py      every cross-reference that names a section of another
                    document reaches a real heading in that document
+check_routing.py   the on-demand inventory still matches the entry point: the
+                   symptom mirror agrees with SKILL.md, every reference file is
+                   named in skills/apk-reverse/references/routing.md, and every
+                   script is too
+check_commands.py  every command a document tells you to run is checked against
+                   the script's own argparse table -- a documented flag that does
+                   not exist is a drift the anchor checks cannot see
+check_budget.py    keep the always-loaded part from creeping: SKILL.md's whole
+                   body (index lines included, because they load too) measured in
+                   lines and tokens, index-row length, long files with no
+                   navigable head, and hedged rules reported as a trend
 build_scripts.py   audit for machine-specific leftovers (absolute paths, credentials)
 ```
+
+Consistency has a natural counter-pressure -- a broken path fails loudly, and someone fixes it.
+Bloat has none, which is why the third tool exists: every pass adds a reference, an index row and
+a coverage claim, and without a measurement nothing in the repository notices.
+
+`tests/benchmark.md` holds the **regression matrix**: dimension -> public target -> the scripts the
+row exercises -> measured result -> strength label. It is the checklist to re-run before trusting
+any claim under `docs/tool-verification/`. Samples are downloaded into `tools/_work/` and are never
+committed, so each row names its public source and records the hash it was run against.
 
 `docs/tool-verification/` is not part of the installed skill either. It is the evidence record
 for one measurement pass against a real target: what each script actually did, which independent
 method confirmed it, which defects were found, and which scenarios the target could not exercise.
 It exists so the **Coverage** claims in `SKILL.md` can be checked against runs instead of trusted,
 and so the gaps are written down where the next person will find them.
+
+---
+
+Proudly supported by the [LINUX DO](https://linux.do) community.
+
+## Disclaimer
+
+**For learning, research and authorized security testing only.** Every script, reference and
+recorded result in this repository exists to explain *how* Android application analysis works, so
+that practitioners can reason about the tools they already own. Nothing here is a service, a
+product, or an endorsement of any particular use.
+
+- **Authorized targets only.** Use this on applications you own or have been explicitly permitted to
+  analyze, on public CTF/challenge material, or in a sandbox you control. Analyzing software you have
+  no right to analyze may be unlawful where you live, and that determination is yours to make, not
+  this repository's.
+- **No warranty, no fitness for any purpose.** The material is provided *as is*, without warranty of
+  any kind. Results are recorded as they were measured on one machine at one time; nothing here
+  promises that a route will work on your target, your device, your toolchain or today's app version.
+- **Verify before you trust; back up before you act.** Several scripts modify artifacts (dex, APK,
+  `.so`, stored app data) and some operate on a rooted device. Keep your own copies, work on
+  duplicates, and read `SKILL.md`'s gates before running anything against something you care about.
+- **Your use is your responsibility.** The authors and contributors accept no liability for any loss,
+  damage, legal consequence or service interruption arising from the use or misuse of this
+  repository, and are not affiliated with, endorsed by, or acting on behalf of any application,
+  vendor or platform it may be used to examine.
+- **Test data is not distributed here.** Samples, dumps and device artifacts are deliberately absent
+  from the tree (`.gitignore` excludes them) and live only in a local, ignored workspace. Anything you
+  obtain to follow along is yours to keep safe and to delete when you are done with it — follow your
+  local rules and the terms that came with the sample. What this repository *does* publish is the
+  method and the evidence, with all target identity removed.
+- **No affiliation.** Names of tools, libraries, hardening products and public challenge targets
+  appear only to make the material reusable; they belong to their respective owners and this project
+  is not connected to them.

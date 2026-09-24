@@ -17,7 +17,14 @@ Division of labour, so the two files never duplicate:
 **This repository does not do kernel development.** Everything in the kernel section is a map of
 externally documented mechanisms with sources, labelled `inferred` — none of it was executed here.
 That is deliberate: the purpose is to stop you from spending a day rediscovering the version
-gate (§4) or the conflict (§5), not to teach kernel hacking.
+gate () or the conflict (), not to teach kernel hacking.
+
+**Extension pass, read the next paragraph before relying on it.** This file now has a companion
+generator — `scripts/kernelsu_syscall_mask.py` — which emits a loadable userspace module skeleton
+plus kernel-side **templates** for the three routes in. The generator, its userspace output and
+its own consistency check are `measured`; **the kernel-side code has never been compiled or loaded
+anywhere**, and every generated kernel file says so in its own header. A template is a starting
+point that removes the blank page, not a weapon that has been fired.
 
 ## 1. The attack-surface timeline — why "just hook it" fails
 
@@ -47,7 +54,7 @@ why the hook does not land):
 | `/proc/self/maps` scan for foreign mappings | The read can be done with raw `openat`+`read` syscalls (same svc trick), and the thing being detected — your injected agent's mapping — exists in the process regardless of what you hook. |
 | Named pipes / thread-name probes for known agents | Frida's runtime creates identifiable threads (`gum-js-loop` etc.) and (older versions) a linjector pipe. Renaming helps only if you control the runtime's identity, not the probe. |
 | Code-page checksums of the target's own `.so` | An inline hook *is* a modification of the pages being checksummed. The check catches the hook by construction; the only userspace answer is to also neutralise the checksum, which recursively has the same problem if *that* code is checksummed too. |
-| `/proc/self/status` `TracerPid` read | The field is written by the kernel. A userspace hook on the reader works only until the reader uses raw syscalls (row 1). See §6. |
+| `/proc/self/status` `TracerPid` read | The field is written by the kernel. A userspace hook on the reader works only until the reader uses raw syscalls (row 1). See. |
 
 The structural lesson: **userspace hooking and userspace anti-hooking are the same layer.** A
 detection routine that lives in the same process as your hook, and that is willing to use raw
@@ -85,14 +92,13 @@ documentation (sources at the end of the section); none were re-measured here �
 
 Sources: KernelSU README + FAQ (github.com/tiann/KernelSU), APatch FAQ (apatch.dev, project
 originally at github.com/bmax121/APatch), fetched 2026-09. Device facts (Magisk alpha on kernel
-4.14.186) are `observed` in `tools/_phone-modules/README-手机模块环境.md`.
+4.14.186) are `observed` on the reference device used for this pass.
 
 ## 3. Environment-hiding modules: Zygisk-Assistant vs Shamiko
 
 Both are Zygisk modules that hide root + Zygisk from target apps. **Do not install both** — they
 overlap in function (mount-namespace handling, trace wiping) and interfere; this is documented in
-the module ecosystems and was the deciding fact on the reference device (`observed` in
-`tools/_phone-modules/README-手机模块环境.md`: Shamiko kept as a backup zip, uninstalled).
+the module ecosystems and was the deciding fact on the reference device (`observed`: Shamiko kept as a backup zip and uninstalled there).
 
 The practical difference is their **denylist dependency** (from each project's own README,
 `inferred`):
@@ -110,7 +116,7 @@ ZygiskNext) is the supported path. The denylist/enforcement settings are the par
 wrong: **enforcement off, list populated** is the working combination for both.
 
 Verification status: neither module's hiding effect was tested against a real detector on the
-reference device (`tools/_phone-modules/README-手机模块环境.md` §未覆盖的验证) — treat every
+reference device — treat every
 "this hides X" claim above as documented-but-unproven here.
 
 ## 4. Kernel-level interception — the map, and the version gate
@@ -130,7 +136,7 @@ uname -r            # on the device. The gate for most of this section is 5.10+
   expects it) targets GKI kernels. Source: the Android kernel architecture documentation on
   source.android.com (GKI and eBPF pages). On the reference
   device (kernel **4.14.186**) this entire row is **closed** — `observed` (the version), with the
-  consequence recorded in `tools/_phone-modules/README-MCP与网络环境.md`: eBPF-based tooling
+  consequence that eBPF-based tooling
   (stackplz, mcp-termux's tracing half) is unavailable there. Write the one-line environment fact
   per `detection-and-anti-analysis.md` Step 5 and do not revisit it.
 
@@ -138,7 +144,7 @@ uname -r            # on the device. The gate for most of this section is 5.10+
 |---|---|---|---|
 | **eBPF kprobes/uprobes** | Fire a BPF program on kernel or userspace function entry; observe syscall arguments/results system-wide, invisible to the target process | GKI 5.10+ kernel with the BTF/tracing config; root; toolchain (bpftrace or a custom loader) | `inferred` — documented upstream, not run here |
 | **seccomp-BPF filter** | Per-process syscall allow/deny — can make a syscall **fail**, and seccomp can be installed by the app on itself (no root needed for self-filtering) | Any modern kernel; but a filter you install into the target requires ptrace/zygisk injection first | `inferred`. **Key limitation**: seccomp can reject or error a syscall (SECCOMP_RET_ERRNO/TRAP); it cannot rewrite the *content* of what a successful read returns. It closes doors; it does not paint them. |
-| **Kernel module hooking** (KPM on APatch; out-of-tree LKM elsewhere) | Inline hooks and syscall-table hooks in kernel space — the layer that *can* rewrite what a `/proc` read returns | APatch (KPM) or a self-built kernel/LKM load path; kernel-dev skills | `inferred`. This is genuine kernel development — out of scope for this skill (§7) |
+| **Kernel module hooking** (KPM on APatch; out-of-tree LKM elsewhere) | Inline hooks and syscall-table hooks in kernel space — the layer that *can* rewrite what a `/proc` read returns | APatch (KPM) or a self-built kernel/LKM load path; kernel-dev skills | `inferred`. This is genuine kernel development — out of scope for this skill () |
 | **Zygisk injection** (not kernel, but below the target's defences) | Run code in the target's process from zygote fork, before `.init_array` of the app's own libs | Magisk/KernelSU+ZygiskNext + a Zygisk module; no ptrace involved | `measured` as a framework (LSPosed runs this way on the reference device); a purpose-built module for a given target is `inferred` here |
 
 The row that matters most in practice: **Zygisk is the cheap "below userspace" route** — it is in
@@ -146,6 +152,83 @@ the process earlier than any userspace tool can be, needs no ptrace (so it does 
 `TracerPid`), and its ecosystem is maintained by other people. A custom kernel module that
 rewrites one `/proc` read is a research project; a Zygisk module that hooks the target's
 constructor is a build task.
+
+### 4a. From "no weapon" to "template + gate": what the extension pass added
+
+The gap this closes is specific. §4 above was a map with no artefact behind it: a reader told
+"Kernel module hooking — inline hooks and syscall-table hooks in kernel space — the layer that *can*
+rewrite what a `/proc` read returns" had nowhere to go next. `scripts/kernelsu_syscall_mask.py`
+produces the artifact; this subsection states its boundary, because the boundary is the part that
+matters.
+
+**The correction worth internalising first: a KernelSU module cannot do any of this.** A KernelSU
+(or Magisk, or APatch-userspace) module is a *userspace* module whose scripts run as root in the
+normal world. `module.prop`, `post-fs-data.sh` and `service.sh` cannot change what `openat`
+returns — not because of a version gate, but because nothing in that format is ever in the kernel's
+return path. Detectors of the kind §2 and §3 discuss are not defeated by a module of that shape.
+The generator emits that skeleton anyway, because it is the right carrier for the configuration and
+the metadata, and it says in its own README what the skeleton cannot do.
+
+What *can* reach the return path is one of three artifacts, and each carries a gate that has to be
+checked on the actual device:
+
+| Artifact | What it is | Gate | Status of the shipped template |
+|---|---|---|---|
+| **KPM** (KernelPatch / APatch) | A relocatable `.kpm` loaded by kpimg injected into the kernel image; replaces syscall-table pointers (`fp_hook_syscalln`) or rewrites prologues (`hook_wrapN`) | A KernelPatch-patched boot image, plus a **bare-metal** ARM64 toolchain (`aarch64-none-elf-gcc`) — not the NDK | `unverified` — template only, never compiled |
+| **Out-of-tree LKM** | An ordinary kernel module that reaches `sys_call_table` and swaps a pointer | Kernel source matching the device's exact vermagic, and on ≥5.7 a way around `kallsyms_lookup_name` no longer being exported | `unverified` — template only; rated last of the three on cost |
+| **eBPF probe** | A BPF program on a syscall tracepoint or kprobe | GKI 5.10+ with the tracing/BTF machinery | `unverified` — template only; the version gate alone closes it on most older devices |
+
+The eBPF row carries a capability ceiling that is easy to miss and is stated in the generated file
+as well: **a tracepoint can observe a syscall, not rewrite its result.** `bpf_override_return()`
+only applies to functions flagged `ALLOW_ERROR_INJECTION`, which raw syscall entries are not —
+so "eBPF to spoof a `/proc` read" is, on most kernels, an observation plan wearing a rewrite
+plan's clothes. Observation is genuinely useful (it tells you which syscall the check uses, which
+`§5` requires you to know anyway); it is not spoofing.
+
+**Field notes on the KPM route, from a public KPM development write-up** (`inferred` here — the
+author's measurements, not this repository's; source: blackr0ck, *APatch KPM 开发*,
+[bbs.kanxue.com/thread-291665.htm](https://bbs.kanxue.com/thread-291665.htm), 2026-06). These are
+recorded because each one is a day of somebody's time:
+
+- **An inline hook can install cleanly and never fire.** On a GKI kernel with LTO, the exported
+  symbol is frequently not the call site — the callee was inlined into its only caller, so
+  replacing instructions at the symbol's address intercepts nothing. The reported symptom is
+  "module loaded, callback never ran". Pointer replacement in the syscall table does not have this
+  failure mode, because the syscall entry path must go through the table.
+- **The instruction-sequence length in a module header is a trap of its own.** The reported cause
+  of a hard-to-diagnose load failure: declaring a resolved kernel function with `extern` makes the
+  compiler emit an undefined reference (`*UND*`) instead of allocating the slot, and the loader
+  refuses the module with `unknown symbol`. Letting it be a tentative definition allocates `.bss`
+  and the loader fills it in. The generated template states this rule in the code, and
+  `verify` checks for it.
+- **Per-syscall callbacks run on every syscall of that number, system-wide.** The reported
+  incident: a `write` hook that did not first reject `fd <= 2` intercepted the framework's own log
+  output tens of thousands of times and the device rebooted. **Performance is correctness here** —
+  the first statement in every callback is a filter that rejects the common case.
+- **Which hook point survives is kernel-specific, and the cheap way to find out is to start at the
+  syscall layer.** The same write-up reports that modifying the SELinux internal function they
+  first targeted crashed the kernel under every combination tried (before/after, argument,
+  return value, skip-origin), while a syscall-table hook on `write` proved stable and sufficient.
+  Treat the syscall layer as the default and move inward only with evidence.
+
+**Measured on the reference device, and why every template here is labelled the way it is.**
+`<DEVICE>` runs kernel **4.14.186+** (`adb shell 'uname -r; cat /proc/version'` →
+`4.14.186+`, `Linux version 4.14.186+ (nobody@android-build) (Android (6443078 based on r383902)
+clang version 11.0.1 ...) #1 SMP PREEMPT Wed Mar 30 23:32:42 CST 2022`). On that device the two
+remaining gates answer themselves:
+
+- **eBPF**: 4.14 is far below the 5.10 gate. Closed, as §4 already recorded.
+- **KPM**: no KernelPatch-patched image is present, and the host has no
+  `aarch64-none-elf-gcc` (`kernelsu_syscall_mask.py gates` reports `NOT FOUND`, along with no
+  `ndk-build` and no `make`). Installing APatch means patching the boot image — a bricking risk
+  that this repository does not take on an APK task.
+- **LKM**: no kernel source for the device, so no matching vermagic is possible.
+
+So on this machine the honest answer to "do you have a kernel-level weapon" is: **you have a
+template, a gate table and a measured statement that the gate is closed here.** That is a route
+decision, not a failure — and it is the same shape of answer §6 gives for the whole escalation
+ladder. Do not let the existence of the template change what you claim about it: `unverified` is
+still `unverified`.
 
 ## 5. The syscall-level realities that survive every hook
 
@@ -158,7 +241,7 @@ rather than to any tool:
    - attach-free operation: **Zygisk** (injection at fork; no ptrace) or Frida **spawn** (still
      ptrace-based but only during injection — verify for your version) or a memory patch applied
      before detach (`scripts/spawn_patch_detach.py`, `measured`);
-   - kernel-level hiding of the field (KPM/eBPF rewrite of the proc read) — §4, `unverified`;
+   - kernel-level hiding of the field (KPM/eBPF rewrite of the proc read) —, `unverified`;
    - **self-ptrace**: the target ptraces itself so nothing else can (classic anti-anti-debug);
      works because only one tracer is allowed — but it constrains your tooling to non-ptrace
      routes anyway. `inferred`.
@@ -171,14 +254,14 @@ rather than to any tool:
 ## 6. What the reference environment chose (and why it generalises)
 
 On the 4.14-kernel reference device, the escalation ladder terminates early — and that is the
-honest outcome (`observed`, from `tools/_phone-modules/README-*.md`):
+honest outcome (`observed` on that device):
 
 | Layer | Status on a 4.14 Magisk device |
 |---|---|
 | LSPosed (Zygisk) module hooking | available — framework activation verified by log (`welcome to LSPosed!` lines, `lspd` daemon process) |
 | MT Manager on-device editing/repack/sign | available (`on-device-tooling.md`) |
 | eBPF tracing | closed (kernel gate) |
-| KPM / kernel module route | closed (no kernel source/build for the device; out of scope regardless) |
+| KPM / kernel module route | closed on this device — no KernelPatch image, no kernel source, no bare-metal ARM64 toolchain; the **template and gate table** are shipped (§4a) |
 | Frida with disguised server | available (a renamed server binary was present on the device from prior work) |
 
 The generalisable rule: **enumerate the ladder for *your* device once, write the one-line
@@ -198,14 +281,19 @@ defeated with a custom kernel module is not a deliverable anyone can install.
 | Check uses raw syscalls | Static patch of the check; or LSPosed/Zygisk module hooking the consuming code | "Hook libc open/read" (does nothing) |
 | Check detects the *environment* (root/emulator), not your patch | `detection-and-anti-analysis.md` A/B/C — usually a different device or route | Kernel work |
 | You are about to write a kernel module / patch a kernel | Stop. State what is blocked and the evidence; propose the static/module route | Kernel development (out of scope for this skill) |
+| You have the kernel template and want to load it on a 4.14/Magisk device | Read `§4a`'s gate table, confirm the gate is closed, and say so | Patching a boot image to obtain a kernel route, on an APK task |
+| A kernel-side template exists, so it feels like a weapon | It is `unverified` until a device with the matching gate compiles and loads it | Presenting a template as a working capability |
 | Escalation effort exceeds the user's actual ask | `detection-and-anti-analysis.md` stop signal — switch to static | One more layer |
 
 ## Checklist
 
 - [ ] `detection-and-anti-analysis.md` read first; A/B/C chosen deliberately
-- [ ] Check located on the timeline (§1) before choosing a counter-layer
+- [ ] Check located on the timeline () before choosing a counter-layer
 - [ ] Root scheme's artefacts enumerated (manager/daemon/mounts) before blaming the target
 - [ ] Hiding module: exactly one of Shamiko / Zygisk-Assistant; denylist configured to its spec
 - [ ] Kernel rung checked against `uname -r` — one line recorded if closed
+- [ ] Kernel-side template treated as `unverified` until a device with the matching gate
+      actually compiles and loads it (`§4a`); the userspace module skeleton is a carrier for
+      configuration, not a kernel capability
 - [ ] Raw-syscall vs libc-call distinction verified by disassembly before building any spoof
 - [ ] No kernel development undertaken as part of an APK deliverable

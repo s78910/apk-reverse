@@ -32,12 +32,46 @@ cross-check with the program headers.
 |---|---|---|
 | `baksmali` / `smali` (jars) | `java -cp <jars> org.jf.baksmali.Main d <dex> -o <dir>` | round-tripping, reading a method precisely |
 | `dexlib2` | small Java program | method-level rewrite, leaves everything else untouched (`dex-patching.md`) |
-| **`droidasc`** (ASC) | `droidasc findrefs app.apk string <S>` | **the fastest whole-APK cross-reference index** — reach for this FIRST, to *locate*. See below |
+| **`rasc`** (Rust ASC) | `rasc findrefs app.apk string <S>` | **the same index, 4–15× faster**, no Python runtime, a Rust DEX decompiler behind `getclass`. Reach for this FIRST when it is built — its one blind spot is documented in `rasc-and-droidsaw.md` |
+| **`droidasc`** (ASC) | `droidasc findrefs app.apk string <S>` | the original Python index, one `pip install` away, and the cross-check for `rasc`. Reach for it FIRST when `rasc` is not built |
 | **`ddc`** | `ddc app.apk -c <Class>` | **fastest read of dex as Java, plus query subcommands** — reach for this SECOND, to *read*. See below |
 | `apktool` | `java -jar apktool.jar d/b` | whole-app decode including resources |
 | `jadx` | `jadx --no-res -d <out> <apk>` | readable Java for orientation; **not** a source of truth, and **not** a recon entry point (see below) |
 | `aapt2` | `aapt2 dump badging <apk>` | manifest facts, package name, versions |
 | `zipalign`, `apksigner` | from build-tools | alignment and signing |
+
+### rasc — the same index in Rust, when you have built it
+
+`rasc` is the `rust` branch of the same project (`MG1937/ASC`). Same CLI shape — `classes`,
+`manifest`, `getclass`, `findrefs {string,type,method,field}` — no Python at all, and a 2.13 MB
+binary. **Measured on this repository's archives: identical class-definition sets on both a 1.4 MB
+MASTG challenge and a 34.8 MB app (30,768 classes, 0 differences either way), at 4.0–4.7× for
+`classes` and up to 14.7× for `findrefs`.**
+
+It must be built — there is no release asset and no crate — so the kit wraps that:
+
+```bash
+python scripts/rasc_build.py --check            # what is present
+python scripts/rasc_build.py --build            # needs git + rustup; ~2 min
+python scripts/rasc_build.py --verify app.apk   # compares class sets against droidasc, fails on a difference
+```
+
+**It is a registered capability, so G2 does not have to guess:** `doctor.py` reports `dex_index_rust`
+as `OK` when a binary is present (PATH, `APKREV_TOOLS`, or the work-area path `rasc_build.py` builds
+into) and `BLOCKED` with that build command as the next action when it is not — alongside
+`dex_index_python` for the `pip install` route. A machine with neither is not stuck: the Python
+indexer is one command away, and the two are cross-checked against each other by
+`rasc_build.py --verify`.
+
+**The one thing to know before trusting its `getclass`:** on an `enum` whose constants override an
+abstract method, the outer class is printed as a bare constant list and the per-constant bodies are
+**not inlined** — no warning, and none in the Python tool either, because both leave those bodies in
+their own subclasses. They are one query away (`Lpkg/Enum$1;`, and both tools decompile those fully);
+`droidasc`'s outer-class listing is simply richer (2,170 B vs 314 B on the measured class, carrying
+`$VALUES`, `$values()` and the constructors). Sampling 20 app-like classes from a real app, 17 were
+judged by the JADX-parity harness and 16 agreed literal for literal; the one that differed was exactly
+this shape. Use it to *locate* and to read ordinary classes, and read the constants when an enum shows
+no bodies. The measurements and the failing class are in `references/rasc-and-droidsaw.md`.
 
 ### droidasc (ASC) — ask an APK "who references this?", in one query
 
@@ -204,6 +238,7 @@ not that the method is empty.
 | `radare2` / `rizin` | `r2 -q -c '<cmds>' file` | scriptable disassembly/analysis; the practical choice when no GUI is available |
 | `Ghidra` (headless) | `analyzeHeadless <proj> <name> -import <file> -postScript <s>` | decompiler without a GUI; slower to script but far better output than a raw disassembler |
 | `capstone` (python) | library | decoding in your own scripts — see the silent-stop trap below |
+| **`svc_scan.py`** | `python scripts/svc_scan.py libfoo.so [--context 3]` | **names the syscall behind an inline `svc`** and reports which PT_LOAD segment each hit is in. Use it *before* planning a libc-level hook: a module with its own `exit`/`kill` `svc` sites is not observable through libc, and one without them means a missing event is a finding about your hook. Read the neighbours (`--context`) — a byte scan for `svc` also matches inside data. Measured on the test device: device `libc.so` = 4 termination sites (its own exports), a shell library's 21 hits = all data |
 | `keystone` (python) | library | assembling a short patch when you are editing bytes by hand |
 | `pyelftools` (python) | library | **section-based — unreliable on hardened targets.** Prefer hand-walking `PT_LOAD`/`PT_DYNAMIC`, as `scripts/elf_plt.py` does |
 | IDA Pro | GUI, **or headless via `idalib-mcp`** | the strongest decompiler output. Do not assume it needs a human in front of it — a headless MCP server exists (see *MCP tool servers* below). Ask for a human only when that setup is genuinely unavailable |
@@ -218,6 +253,15 @@ completeness matters (`native-tamper-and-suicide.md` §Scanner traps).
 **Disassembler output is a hypothesis.** Fixed-width architectures (aarch64) decode almost any
 4-byte window into *some* instruction, so a wrong start offset yields plausible-looking garbage.
 Bound your window with a known entry point or a known call site.
+
+**A decoder is a decoder, not an oracle.** Two independent decoders agreeing is the signal worth
+having (measured: a hand-written word scan for the `svc` encoding and the `capstone`-based scan in
+`svc_scan.py` returned the identical 214-site set on a device `linker64`, set difference empty); one
+decoder's disagreement with itself is not. **`dexdump`** (from build-tools, e.g.
+`E:\tools\android-14\dexdump.exe`) is the cheap independent reader for the dex half of this: use it
+to count a dump's class and method records rather than trusting a self-written parser, the same way
+`advanced-unpacking.md` §Establish "the bodies do not decode" with a decoder you did not write
+requires.
 
 ### Ghidra — the decompiler for a target whose decisive layer is aarch64
 
@@ -292,6 +336,32 @@ Rules that follow:
    (`dynamic-frida.md`) instead of escalating the static tools — that distinction is the difference
    between "install a decompiler" and "the decompiler cannot help here", and they look identical from
    the outside.
+
+## Where to get a tool we do not ship — a sourced gap list, not a link dump
+
+The list below exists because "install the tool" needs a *source*, and searching for one on a target's
+clock is how a ten-minute install becomes an hour. **Two grades are used here and they are different
+claims:** `URL verified` means the repository was resolved on the date given; `tool unverified` means
+nobody has run it here. Most rows are `URL verified / tool unverified` — treat them as leads with a
+date on them, not as recommended tools, and check the row's own prerequisites when you install it
+(§Closing a capability gap — installing the tool IS the task). Rows marked `measured` have been used here.
+
+| Gap | Source | Grade / what is actually known |
+|---|---|---|
+| Decompiler for dex/Java | `https://github.com/skylot/jadx` | URL verified 2026-09-21; tool unverified here (not installed). The kit's route is `droidasc`/`ddc` for queries and jadx only to *read* a class already located |
+| Repacking beyond `scripts/repack.py` | `https://github.com/iBotPeaches/Apktool` | URL verified 2026-09-21; tool unverified. Not installed on this host, and the `apktool.bat` in `E:\tools\bin` is a dead link — do not trust a `.bat` to mean the tool works |
+| smali round-trip outside the bundled dexlib2 kit | `https://github.com/JesusFreke/smali` | URL verified 2026-09-21, **last upstream push 2024-01-17** — maintenance status is a fact to check before adopting it for a new dex version |
+| Anti-detection on the frida side (patched server plus a script surface aimed at RASP) | `https://github.com/CrackerCat/strongR-frida-android` | URL verified 2026-09-21; tool unverified. A patched `frida-server` is an **environment** change: record it in the task record, because results obtained under it are not comparable to a run without it |
+| A dex dumper that does not use `ptrace` | `https://github.com/index-login/MobileRE-Skill` (`.kilo/skill/rev-dex-dumper/`) — `panda-dex-dumper`, `mem-dex-dumper` + C source | **Partly measured**: both ELF images were inspected here and neither imports a `ptrace` symbol (`panda` = aarch64 `ET_DYN`, 48 symbols; `mem` = aarch64 static, stripped), so the *claim* is consistent at the symbol layer; the **dump behaviour was not run here**. Our own `/proc/<pid>/mem` read is `advanced-unpacking.md`'s root-side route and is measured |
+| eBPF-based dex extraction | `https://github.com/LLeavesG/eBPFDexDumper` | URL verified 2026-09-21; tool unverified, **and unusable on `<DEVICE>` anyway** — kernel 4.14 against a 5.10+ requirement (`kernel-and-environment-hardening.md`). Listed so the next reader does not re-derive the version gate from scratch |
+| Decompilation/deobfuscation/unpacking without a JVM | `https://github.com/adam-040/Enigma`, `https://github.com/1-3-7/disrobe` | URLs verified 2026-09-21; tools unverified. Both are interesting precisely because they remove the JVM/IDE dependency a Ghidra or IDA route carries — evaluate prerequisites before adopting |
+| Java2C generation to *build* a fixture | `https://github.com/amimo/dcc` | **Partly measured here**: `dcc` itself was run in a previous pass, but the C compile needs an NDK this host does not have, so no Java2C artifact was ever produced (`java2c-and-jni-sinking.md`) |
+| Building an LSPosed module without gradle, or comparing against a maintained template | `https://github.com/Jordan231111/lsposed-universal-template` | URL verified 2026-09-21; tool unverified. Its layout is gradle-based, which this host cannot build — useful as a **manifest/scope reference** only. (`mabbcoll13/xposed-module-kit` no longer resolves: HTTP 404 on 2026-09-21, which is why this row's date is worth writing down) |
+| Dart AOT snapshot front end | see the §Closing a capability gap table above | measured here: `aotopsy` runs with no toolchain; `blutter` measured ≈78 s end to end on this host |
+
+Two habits that keep this list from rotting: **write the access date next to a URL** (a dead link with
+no date reads as a current recommendation — one row above is already 404), and **promote a row only
+when someone runs the tool**, so `URL verified` never silently becomes "we use this".
 
 ## MCP tool servers — an external dependency, not a tool on the shelf
 
@@ -397,7 +467,7 @@ script, and check the device architecture — the server binary is per-ABI.
 
 **A version mismatch here wastes the most time of any tool in this file.** A Dart decompiler built
 for a different engine version produces output that is subtly wrong rather than obviously broken.
-Pin the version first (`dart-aot.md` §1) and do not "try it and see".
+Pin the version first (`dart-aot.md`) and do not "try it and see".
 
 ## Using the kit's scripts instead of writing your own
 

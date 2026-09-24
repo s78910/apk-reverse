@@ -1,6 +1,14 @@
 ---
 name: apk-reverse
-description: "Reverse engineer, debloat, de-ad, patch, or re-sign Android APKs, and analyze their runtime and server-side behavior. Use when a task involves an .apk/.aab/.dex/.so sample, smali or dex patching, Frida/objection runtime hooking, repacking and re-signing, removing ads or SDK trackers, probing a mobile app's HTTP API, or deciding whether a client-side patch is even capable of achieving the goal. Covers recon, anti-tamper, ad removal, membership/paywall limits, dex-level surgical patching, repack pitfalls, device and emulator setup, and a hard-won failure catalogue. Load the body before planning any patch work: it opens with a symptom index and four gates that must be cleared first."
+description: "Reverse engineer, debloat, de-ad, patch, or re-sign Android APKs, and analyze their runtime and server-side behaviour. Use for an .apk/.aab/.dex/.so sample, smali or dex patching, Frida hooking, repacking, ad or SDK removal, API probing, or deciding whether a client-side patch can work. Covers recon, anti-tamper, membership limits, surgical dex patching, repack pitfalls, device setup, and a failure catalogue."
+license: MIT — see LICENSE at the repository root
+compatibility: "Python 3.9+. Device work needs adb; dynamic analysis a matching frida-server; re-signing zipalign plus apksigner, not just a JVM. Static dex/ELF work and the leak scanner are offline. Run doctor.py --json for status."
+metadata:
+  version: "1.0"
+  capability_registry: skills/apk-reverse/scripts/capabilities.py
+  evidence_summary: skills/apk-reverse/references/evidence-summary.md
+  last_reconstruction_pass: "2026-09-22"
+  strength_labels: "observed | inferred | unverified"
 ---
 
 # APK Reverse Engineering & Patching
@@ -8,17 +16,30 @@ description: "Reverse engineer, debloat, de-ad, patch, or re-sign Android APKs, 
 Goal: reach a **verified, installable, still-working artifact** fast — and avoid the whole class of
 mistakes that destroy an APK while looking completely healthy.
 
-## How to use this file
+## Immediate — do these four things before anything else
 
-This file is a **procedure with gates**, not background reading. Three things are mandatory:
+This file is a **procedure with gates**, not background reading, and it is long enough that its middle
+gets skimmed. So the four moves come first; everything below is the explanation for them.
 
-- Before you patch anything, clear the **four gates** in §Gates. They are actions with pass criteria,
-  not attitudes.
-- When anything fails in a way your current plan does not explain, **stop and check the symptom
-  index**. If a row matches, load that file before running another command.
-- When this file and your own reasoning disagree, **this file wins** until you have evidence that
-  overrides it. Every rule here is the residue of a failure that cost hours; your current intuition is
-  the intuition of someone who has not hit it yet.
+**1. Classify before choosing a route.** Answer the thirteen questions in §Start here. **R4** decides
+whether you are editing the right layer at all, and a wrong branch does not fail loudly — it produces
+an artifact that builds, runs, and does the wrong thing.
+
+**2. Clear the four gates, in order, with their pass criteria** (§Gates). G1 names the deliverable form
+in one testable sentence *before* any work; G2 establishes what this machine can really do; G3 locates
+the code; G4 records the baseline and the control. "I understand the idea" is not clearing a gate.
+
+**3. A symptom you cannot explain is a stop signal, not a puzzle.** Search §Symptom index for the shape
+**before your next attempt** and load the file that row names. Those rows exist because each one cost
+hours — and in several cases the answer was already written down while it was being re-derived.
+
+**4. Two strikes on one shape of attempt sends you back to classification**, not to a third variant
+(§Stop conditions). And **never report done without the six items in §What "done" means.**
+
+**Two rules about this file itself.** When a failure does not fit your plan, the symptom index is the
+next action, not more reasoning. And when this file and your own reasoning disagree, **this file wins**
+until you have evidence that overrides it: every rule here is the residue of a failure that cost
+hours, and your current intuition is the intuition of someone who has not hit it yet.
 
 ## Four rules that override everything else
 
@@ -49,42 +70,29 @@ native, Dart/Unity, server). Patching the wrong layer either does nothing or bre
 patch "had no effect", the diagnosis was wrong — go back to classification instead of patching harder.
 → `references/recon.md`, then the layer-specific file the symptom index points at
 
-## Tooling — what to reach for, in order, and how to notice what you are missing
+## Tooling — reach for the right instrument, and check before declaring it absent
 
 Most wasted rounds in this domain are not bad reasoning about the target. They are **the right question
 asked of a tool too weak to answer it**: an hour of `grep` over a hand-exported smali tree where one
-indexed query would do, or a full manual ELF walk where a decompiler was one `pip install` away. The
-failure is invisible from the inside, because the weak route still produces output.
+indexed query would do, a manual ELF walk where a decompiler was one `pip install` away. The failure is
+invisible from the inside, because the weak route still produces output.
 
-Four obligations. These are instructions, not preferences:
+**Five obligations. These are instructions; a violation is a defect, not a preference.**
 
-- **Orient with an indexer, not with an export.** Before reading code, build the ability to *ask the
-  artifact questions* — `droidasc findrefs` (string/type/method → every reference site, sub-second) or
-  `ddc findrefs`. A full decompile is for reading a class you have **already located**; it is not the
-  way you locate it. Treat `jadx` as a readable viewer of last resort, never as the source of truth, and
-  never as the entry point of a recon. → `references/toolchain.md` §Tier 1 — dex and Java
-- **When the hot layer has no working tool here, installing one is part of the task.** A missing arm64
-  decompiler is not a constraint to route around; it is the next step. Route around it and you pay in
-  hours for a result a decompiler gives in minutes. Ask a human only when installation is genuinely
-  impossible. → `references/toolchain.md` §Closing a capability gap
-- **Name the gap before you spend against it.** State the capability the current blocker requires, and
-  whether this machine has it. This is a G2 item, not a note to yourself.
-- **Reach for a script here before writing a new one.** The kit exists precisely so that parsing,
-  hashing, alignment and hot-plug probes are not re-derived per task; a bespoke script written in place
-  of `scripts/dex_find_insn.py` is how offsets get guessed instead of computed.
-  → `references/toolchain.md` §Using the kit's scripts instead of writing your own
-- **Pick the instrument for the layer the question lives on — the heavier one is not the safer one.**
-  A dex in memory wants `dex_mem_scan.py` (find and cut) plus `dex_dump_validate.py` (judge), not a
-  full decompiler pointed at a fragment; an algorithm you only have to *call* wants
-  `references/emulation-and-rpc.md`, not a week of reading a flattened function
-  (`references/native-dbi-and-deobfuscation.md`); "does this class ever get loaded at runtime" wants a
-  hook that fires or does not, not more reading. Reaching one layer up because the correct instrument
-  is unfamiliar is how a ten-minute answer becomes a day — and it usually produces a *plausible* result,
-  which is worse than none.
+| Obligation | Do this | Cost of ignoring it |
+|---|---|---|
+| **Orient with an indexer, not an export** | Build the ability to *ask the artifact questions* before reading code: `droidasc findrefs` / `ddc findrefs` (string/type/method → every reference site, sub-second). A decompile reads a class you have **already located** — it is not how you locate it. `jadx` is a readable viewer of last resort, never the source of truth and never the entry point of a recon | hours of `grep` per question asked, over an export you paid for first |
+| **Install the missing tool; it is part of the task** | A missing arm64 decompiler is the next step, not a constraint to route around. Ask a human only when installation is genuinely impossible | hours re-derived by hand for output a decompiler gives in minutes |
+| **Name the gap before spending against it** | State the capability the blocker requires and whether this machine has it, **out loud**. This is a G2 item | designing around a tool that installs in ten minutes |
+| **Reach for a shipped script before writing one** | Parsing, hashing, alignment and hot-plug probes are already written; a bespoke script in place of `scripts/dex_find_insn.py` is how offsets get **guessed instead of computed** | a wrong offset that decodes cleanly and behaves wrongly |
+| **Pick the instrument for the layer the question lives on** | A dex in memory wants `dex_mem_scan.py` (find and cut) **plus** `dex_dump_validate.py` (judge), not a decompiler pointed at a fragment. An algorithm you only have to *call* wants `emulation-and-rpc.md`. "Does this class ever load at runtime" wants a hook that fires or does not | the heavier tool is not the safer one — it produces a *plausible* answer, which is worse than none |
 
-A capability you have not checked for is not a capability you lack. Run
-`python skills/apk-reverse/scripts/doctor.py` and read what it finds **off-PATH** before concluding
-that anything is unavailable.
+**Run `python skills/apk-reverse/scripts/doctor.py --json` before concluding anything is unavailable.**
+It reports per-capability closure — what is missing, what to install, and roughly how long that takes —
+and a capability you have not checked for is not a capability you lack. **It is deliberately allowed to
+report `BLOCKED`:** a machine with a JVM but no `zipalign`/`apksigner` cannot re-sign, and the report
+says so rather than inferring capability from a tool that is merely present. Detail:
+`references/toolchain.md`; the registry it reads is `scripts/capabilities.py`.
 
 ## Coverage — what this skill claims, and what it does not
 
@@ -93,195 +101,55 @@ applying the nearest available procedure to a target it was never written for.**
 that almost fits is more dangerous than no method at all, because it arrives with a plan, a
 vocabulary and a set of reassuring numbers.
 
-**Covered, by verified mechanisms:**
+**How strong these claims are — this is load-bearing, not cosmetic.** Every claim in this skill carries
+one of three labels, and you must label your own results the same way:
 
-- Client-side ads, promos and splash/popup/tab configuration — including the server-issued UI config
-  that has no SDK to find (`ad-removal.md`, `server-config-and-updates.md`).
-- Deciding whether a membership, paywall or feature gate is *client-enforceable* at all, and saying
-  so plainly when it is not (`membership-and-limits.md`, `account-gates.md`).
-- dex-level surgical patching: equal-length byte edits and dexlib2 method rewrites, plus the header,
-  verifier and alignment rules that decide whether the build loads at all (`dex-patching.md`,
-  `byte-level-patching.md`, `patch-audit.md`).
-- Repacking, signing, installing, and the install refusals that look like a broken build
-  (`repack-and-sign.md`).
-- Packers, custom loaders and code virtualization: identifying them, measuring the validation
-  boundary, and the routes that survive it (`packers.md`,
-  `code-virtualization-and-custom-linkers.md`).
-- The native layer: `.so` hosts, tamper-triggered self-termination, forged ELF structure, and
-  neutralising a terminate path without freezing the process (`native-and-so.md`,
-  `native-tamper-and-suicide.md`).
-- Flutter / Dart AOT: analysing and patching `libapp.so` **given a snapshot dump** — pool-reference
-  counting, disassembly windows, caller indexing, patch-site choice (`dart-aot.md`). Measured on a
-  real Dart 3.6.0 build: `dart_disasm.py` decoded identically to capstone (32/32 and 96/96), the
-  caller index re-derived independently with a symmetric difference of 0, and a specific business
-  logic site was located end to end. **The snapshot dump is a dependency, not a detail** — see the
-  next section.
-- Runtime analysis with Frida, server-side API probing, feature-scoped TLS failures, update and
-  forced-upgrade neutralisation, and the verification discipline everything above rests on.
+| Label | Means | May it justify a decision? |
+|---|---|---|
+| `observed` | a command was run and its output exists | yes |
+| `inferred` | follows from an observation, but the step is reasoned | provisionally |
+| `unverified` | assumed, or reported elsewhere and never reproduced here | only as something to test |
 
-**Covered by documented routes — added in the extension pass, and mostly *inferred* rather than
-measured (read the strength note below before relying on any of these):**
+**The inventory that replaces a guess:** the per-route list of what is covered and what is not — by
+verified mechanism versus by documented-but-mostly-inferred route — is in
+`references/coverage-and-limits.md`. Load it when the question is "can this skill actually do X".
 
-- **Module-side delivery instead of a repack** — what to do when the client-side logic is reachable but
-  a rebuilt APK is refused: scaffolding, deployment, scope configuration, the verification log path,
-  and the honest boundary of what a Java-layer module cannot reach (`references/lsposed-and-modules.md`).
-- **Extraction shells and the VMP boundary** — the dump landed but the method bodies are empty: how to
-  *measure* that instead of guessing, how active invocation (FART-style) is supposed to recover the
-  bodies, why the classic hook points stopped working on Android 12-16, and where recovery honestly
-  stops (`references/advanced-unpacking.md`, `scripts/dex_dump_validate.py`).
-- **Calling the target instead of reading it** — emulated execution (Unidbg/Unicorn) and live Frida-RPC
-  service-ification, for when reversing an algorithm costs more than invoking it
-  (`references/emulation-and-rpc.md`).
-- **Instruction-level tracing and de-obfuscation** — the OLLVM shapes, Frida-Stalker traces, the
-  trace-to-CFG route, and a measured failure mode where `follow` installs but no events arrive
-  (`references/native-dbi-and-deobfuscation.md`).
-- **Protocol reversing beyond REST** — protobuf without a schema, gRPC frame capture, the QUIC/HTTP3
-  limit, and native-side certificate pinning (self-compiled BoringSSL / Flutter)
-  (`references/protocol-reverse.md`).
-- **What to do when userspace hooking provably cannot reach the check** — raw `svc` syscalls,
-  `init_array`-early detection, what each root scheme does and does not hide, the kernel-route map with
-  its version gate, and a decision table for when escalating is the wrong answer
-  (`references/kernel-and-environment-hardening.md`).
-- **Working from the phone itself** — MT Manager edit/repack/sign, its built-in APK MCP surface, LSPosed
-  Manager, and on-device data inspection (`references/on-device-tooling.md`, `scripts/mt_mcp_probe.py`).
+**Partial coverage that is easy to over-read** — these are documented routes whose *dependency* this
+skill does not ship, and each has a fence around it in the same file: Dart AOT analysis needs a
+snapshot dump you must obtain elsewhere and naming the front end matters · extraction-shell recovery
+stops at the VMP boundary · a Stalker trace is not guaranteed on every device · a kernel-side answer
+requires a module this skill only scaffolds.
 
-**Dependencies this skill does not ship — name them before the workflow starts:**
+**Not covered — say so rather than improvise:** Unity / IL2CPP · React Native / Hermes / Cordova ·
+iOS · defeating a server-side authority · an off-the-shelf unpacker or an anti-detection arms race ·
+building and shipping a kernel module. Reasons and evidence boundaries are in
+`references/coverage-and-limits.md`; **silence in that record is not support.**
 
-- **Dart AOT analysis needs a snapshot dump.** `dart-aot.md`'s workflow begins at `pp.txt`; producing
-  it requires a snapshot container resolver that this skill does not contain and cannot synthesize.
-  `dart_pool_strings.py` reports **file** offsets while `pp.txt` and `dart_pprefs.py` speak in **pool**
-  offsets, and the mapping between those two spaces is not a constant: over the 4,241 strings present
-  in both, a measured run found 4,237 distinct deltas. Ship a pinned front end (aotopsy — pure Go, no
-  toolchain) or build blutter (~80 s, needs a C++ toolchain). **Say which one you are using and why,
-  because the two report different Dart version labels for the same binary.** Do not describe the
-  object pool as something this skill decodes on its own.
-
-**How strong these claims are:** the Measured mechanisms below were established by running the
-scripts against a real target during the verification pass recorded in
-`docs/tool-verification/`. The rest are **inferred** — documented from experience, but the
-repository carries no fixture, log or sample that reproduces them (its own `long-task-discipline.md`
-reserves *observed* for a claim with an exact command and output behind it). Treat the distinction as
-load-bearing rather than cosmetic, and label your own results the same way.
-
-**Where the extension-pass claims come from.** The documents listed under *Covered by documented
-routes* were written from public work (Kanxue threads, upstream project documentation) plus whatever
-the extension pass could actually exercise, and each carries its own strength note at the top. Their
-evidence is recorded in `docs/tool-verification/EXTENSION-*.md`, one file per topic, in the same
-three labels this section uses. Read that record before treating any of them as a verified route: the
-common shape there is *the script was measured, the route was not* — a dump validator that ran against
-a real shell is measured; the FART recovery loop that would have used it is inferred until someone
-runs it end to end on a sample that actively resists.
-
-**Not covered — say so rather than improvise:**
-
-- **Unity / IL2CPP logic recovery.** `framework-runtimes.md` identifies the runtime and establishes
-  that the dex is not the battlefield; it does not carry the IL2CPP equivalent of `dart-aot.md`.
-  There is no verified recipe here for locating a method inside `libil2cpp.so` plus
-  `global-metadata.dat`.
-- **React Native / Hermes bytecode** and Cordova/hybrid internals, beyond runtime identification and
-  the generic "find the string, then find what references it" approach.
-- **iOS / `.ipa` of any kind.** Every device, signing and packaging instruction here is Android.
-- **Defeating a server-side authority.** `server-api.md` exists to determine *who owns a gate*, not
-  to break an authorization the server performs.
-- **An off-the-shelf unpacker, and an anti-detection arms race.**
-  `references/advanced-unpacking.md` routes the problem: measure the stub ratio, name which recovery
-  mechanism applies, and stop when the target is a real VMP. It does **not** ship a modified ART
-  runtime, a private-bytecode decompiler, or an opcode-mapping derivation, and it says so instead of
-  presenting a memory dump as a recovery. `detection-and-anti-analysis.md` decides by cost and often
-  concludes "switch to static"; it is not a catalogue of evasion for every detector you might meet.
-- **Kernel development.** `references/kernel-and-environment-hardening.md` maps the kernel-side route
-  (eBPF, seccomp-BPF, kernel modules) and names the version gate that decides whether it exists on your
-  device at all; building and shipping a kernel module is outside this skill.
-- **A working Stalker trace on every device.** The extension pass measured a configuration where
-  `Stalker.follow` installed but delivered no events, and a high-frequency follow/unfollow pattern that
-  crashed a system process. `references/native-dbi-and-deobfuscation.md` carries that as a boundary,
-  not as a recipe.
-
-**Not exercised by the verification pass — do not read silence as support:** the packer, code
-virtualization, custom-linker, integrity-check-redirection and tamper-triggered-suicide scenarios
-were **not run** against the verification target, because that target has none of those features (no
-packer, no integrity checker, ordinary application class) and its unmodified build already fails to
-start, which removes the repack-and-regress loop those scenarios need. Nothing in
-`docs/tool-verification/` is evidence either way about them. If you use those documents, the
-claims are still on the inferred footing described above.
-
-**Scripts this pass did not run** — so they carry no measurement at all, and any conclusion drawn
-from them should be labelled accordingly: `native_crash.py`, `apk_diff.py`, `snap.py`,
-`grab_crash.py`, `install_test.py`, `repack.py`, `dex_patch_bytes.py`, `dex_find_insn.py`,
-`dex_check_verifier.py`, `dex_classdiff.py`, `dex_strpatch.py`, `patch_smali.py`, `smtool.py`,
-`datastore_inject.py`, `probe_api.py`, `run_probe.py`, `tls_check.py`, `usb_net_proxy.py`,
-`devsh.py`, and the `dexpatch/` java rewriter. Their absence from the record is not a verdict on
-them. Note in particular that `grab_crash.py` claims to recover stacks hidden by a crash-reporter
-SDK — the exact situation the verification target presented — and was not tried, so that claim
-remains **unverified** and the pass used a purpose-written Frida probe instead.
-
-**The extension pass shipped its own scripts, and each carries its own measurement status** — read
-the matching `docs/tool-verification/EXTENSION-*.md` before relying on one: `dex_dump_validate.py`
-(measured against a fixture derived from a real hardened sample, and against the sample's own shell
-dex), `lsposed_scaffold.py` (its generated project was built end to end and the toolchain timings are
-recorded), `frida_rpc_serve.py` (its `rpc.exports` bridge was exercised on a live device against
-unrelated processes), `mt_mcp_probe.py` (the "service is down" path is measured; the connected path
-needs the service started by hand), and `stalker_trace.js` / `stalker_report.py` (the two *boundary*
-results are measured: a follow that delivered no events, and a crash from following a hot libc
-export — no successful trace of a real target was produced).
-
-**The fallback, as an instruction:** if the target does not match that list, or no symptom-index row
-matches, **stop and classify before choosing a branch.** Answer the thirteen questions first. If the
-shape still does not fit — an unknown runtime, a mechanism you cannot name — say exactly that, and
-propose the cheapest experiment that would identify it, rather than taking the closest documented
-route and applying it anyway. A wrong branch here does not fail loudly: it produces an artifact that
-builds, runs, and does the wrong thing.
+**The fallback, as an instruction — this is a rule, not advice.** If the target does not match the
+covered list, or no symptom-index row matches, then **stop and classify before choosing a branch**:
+answer the thirteen questions (§Start here). If the shape still does not fit — an unknown runtime, a
+mechanism you cannot name — **say exactly that and propose the cheapest experiment that would
+identify it.** Do not take the closest documented route and apply it anyway. A wrong branch here does
+not fail loudly: it produces an artifact that builds, runs, and does the wrong thing.
 
 ## Hand-off points — where this skill ends and another view begins
 
-Three boundaries that are easy to walk into without noticing. Each names what the other side owns,
-rather than restating it, because two copies of the same advice drift apart.
+Four boundaries that are easy to walk into without noticing. Each names what the other side owns
+rather than restating it, because two copies of the same advice drift apart. The JNI form table and
+the per-form verification table live in `references/handoff-boundaries.md`.
 
-**1. JNI — a Java `native` declaration and its implementation are two different views of one function.**
-This skill reads the Java side (dex) and the native side (`.so`) with different tools, so the join is
-where analyses go wrong.
-
-| Form | What you see | How to find it |
-|---|---|---|
-| Static linkage | symbol `Java_<pkg>_<Class>_<method>` in `.dynsym` | search the dynamic symbol table. Under R8 the class name is a short name, so the symbol deforms with it and a search for the readable original finds nothing |
-| Dynamic registration | **nothing** in the symbol table — binding happens at runtime | find `RegisterNatives` call sites, or hook it to read the binding table. Obfuscated targets prefer this, and a symbol search fails **silently** on it |
-| Native → Java callbacks | native code pulling data back through Java | follow `FindClass` / `GetMethodID` / `CallObjectMethod` |
-
-`FindClass`/`RegisterNatives` in a `.so` tell you a JNI boundary exists even when no
-`Java_*` symbol does. **Strength note:** the three rows above are documented behaviour, not results
-from the verification pass, which did not trace a JNI boundary end to end; `FlutterJNI.loadLibrary`
-appearing in a dex is the closest it came. Treat them as a map, not as a measurement.
-
-**2. Hardening — a dex-side packer observation is a native-side implementation question.** If the dex
-turns out to be a shell, the logic is behind a loader, and the analysis moves to the `.so` that
-performs the unpacking. `packers.md` owns the dex-side identification; the native deep dive belongs on
-the other side of this boundary. **Not exercised by the verification pass** — that target had no
-packer, so this pointer carries no measurement.
-
-**3. The existing native boundaries — read native anomalies from the APK side, not from inside.** 
-`native-and-so.md` and `native-tamper-and-suicide.md` are deliberately scoped to what you can conclude
-*from the APK side*: a repacked build that dies instantly with a null-looking fault, a Java-layer
-check that reports success while the process dies, a terminate path you made not-return. That
-judgement belongs here, because it is about deciding whether your *patch* caused the death. Deep
-native work — restoring a symbol, rebuilding a call graph, reversing an OLLVM function — is a
-different activity with a different toolchain. Point across rather than duplicating: if you need the
-latter, say so instead of extending these two files into it.
-
-**4. When the deliverable stops being an APK, the verification question changes with it.** §What
-"done" means is written for a rebuilt, installable artifact, and every word of it assumes one. The
-other three forms in G1 each move the evidence somewhere else, and the failure mode is quiet: a
-privileged result gets reported in the language of a finished build.
-
-| Form | What "verified" now means | What is *not* evidence |
-|---|---|---|
-| **LSPosed / Xposed module** | The module was loaded into the target and its hook produced an observable effect **in the target's own log**, on a named build of the target | The module installed; `pm path` returned a path; the package was enabled in the manager. All three are true of a module whose entry class does not exist in its own dex |
-| **Local RPC / emulation service** | A call returned the value the app itself would produce, from a named target build and a named device or emulated environment — and the harness survives a reconnect | "The script loaded"; a call that returned *something* without a reference value to compare against |
-| **Analysis report with a stated boundary** | The evidence chain (commands, outputs, and the layer each conclusion belongs to) plus the boundary — what was **not** determined and why | Any implication that a route was exhausted when it was only abandoned |
-
-The privileged-form drift R1 warns about lives here. `references/lsposed-and-modules.md`,
-`references/emulation-and-rpc.md` and `references/verification.md` each carry the specific check; this
-table is the reminder that changing the deliverable's form is a decision that must be re-stated out
-loud, not a quiet downgrade of what counts as done.
+1. **JNI** — a Java `native` declaration and its implementation are two views of one function, and
+   this skill reads each with a different tool. A symbol search fails **silently** on dynamic
+   registration. Authoritative treatment: `java2c-and-jni-sinking.md` §The JNI boundary — why a
+   symbol search fails silently.
+2. **Hardening** — a dex-side packer observation is a native-side implementation question.
+   `packers.md` owns the dex-side identification; the deep dive belongs on the other side.
+3. **Native anomalies** — read them *from the APK side*, because the judgement is whether your patch
+   caused the death. Restoring a symbol or reversing an OLLVM function is a different activity with a
+   different toolchain: point across instead of extending `native-and-so.md` into it.
+4. **Deliverable form** — when the artifact stops being an APK, the verification question changes with
+   it. G1's other three forms each move the evidence somewhere else, and the failure is quiet: a
+   privileged result reported in the language of a finished build.
 
 ## Symptom index — a matching row is a stop signal
 
@@ -295,11 +163,14 @@ unread in this repository.
 |---|---|
 | A repackaged/re-signed build **dies before your code runs**; `SIGSEGV`, all registers zero, `pc=0`, `fault addr` near `0x0` | `native-tamper-and-suicide.md` (deliberate crash), then `code-virtualization-and-custom-linkers.md` |
 | **No packer** (Application is the app's own, dex readable) **and it still dies** | `code-virtualization-and-custom-linkers.md` §a loader is still a possibility; but if the same build also dies on a *second, unrelated* device you are looking at an ordinary startup fault, not a hardened one |
-| The app dies at startup on **every** device, packed or not, **and there is no tombstone** while `crash_dump` reports `already traced` and logcat says `exited cleanly (0)` | the target's launch section in the verification record under `docs/tool-verification/` — a bundled crash reporter (Sentry NDK) has taken the signal handlers, so the platform's own evidence trail is gone. Frida spawn-gating is the recovery route; it needs a working frida-server, which a disguised one may not be |
+| The app dies at startup on **every** device, packed or not, with **no tombstone** while `crash_dump` says `already traced` and logcat says `exited cleanly (0)` | a bundled crash reporter has taken the signal handlers, so the platform's own trail is gone. Frida spawn-gating is the recovery route |
 | A `FORTIFY: pthread_mutex_lock called on a destroyed mutex` abort in a Flutter app, on the **main** thread, before the first frame completes | `dart-aot.md` — check `libapp.so` is actually being loaded; Flutter's engine bootstrap is the usual place a native lifecycle fault surfaces |
 | Log says a **Java-layer** signature/integrity check **passed**, yet the process dies | `code-virtualization-and-custom-linkers.md` §a Java-layer "signature killer" is a decoy |
 | Deleting a library fixes validation but yields `UnsatisfiedLinkError: dlopen failed: library "X" not found` | `code-virtualization-and-custom-linkers.md` §the deadlock that eats hours |
-| Whole classes appear as bare `native` declarations with no body | `code-virtualization-and-custom-linkers.md` |
+| Whole classes appear as bare `native` declarations with no body | `java2c-and-jni-sinking.md` — read it **before** dumping memory: if this is Java2C there is no DEX to find, at any point in the process lifetime. A handful of `native` methods in an otherwise ordinary dex is JNI sinking, not this |
+| A `Java_*` search over a hardened library returns nothing at all | `java2c-and-jni-sinking.md` §The JNI boundary — why a symbol search fails silently — dynamic registration, or `-fvisibility=hidden`. The check that works is "exports `JNI_OnLoad` and zero `Java_*`" |
+| You are about to publish an evidence file, a transcript or a README that quotes real work | `references/desensitization-and-leak-scans.md` — run `scripts/scan_leaks.py` **before** it is committed; the hit list is a set of lines to look at, and `--show-exempt` is where the wrong suppressions show |
+| A hooking module appears to have run but its log tag is silent, and you are about to record "it never loaded" | `references/precedents/logd-broken-module-never-ran-case-3.md` — a broken `logd` delivers nothing on `logcat` while the module's whole run sits in LSPosed's file log; read both channels |
 | A library's **SONAME does not match its filename** | `code-virtualization-and-custom-linkers.md`, `native-and-so.md` |
 | Your edit had **no effect at all**, with no error | `server-config-and-updates.md` §3 (the value may be server-sent), then `packers.md` §map the validation boundary |
 | Process **hangs** with no crash record, or dies to a `uid 0` killer | `native-tamper-and-suicide.md` §the rule (you probably made a terminate path *not return*) |
@@ -314,9 +185,13 @@ unread in this repository.
 | You took screenshots but drew the conclusion from logs or from the patch itself | `long-task-discipline.md` §captures you never looked at are not evidence |
 | You are about to re-run an experiment whose result you already recorded | `long-task-discipline.md` §long-context decay |
 | A script will not start, or a tool "is missing" | `scripts/doctor.py`, then `toolchain.md` §"not on PATH" is not "not installed" |
+| A hook or probe reports **no events at all**, and you are about to call it detection | `scripts/anti_detect_probe.js` for the environment self-report first, then `detection-and-anti-analysis.md` §Step 3: locating the check — the order of search from Stage 0 |
+| `attach` hangs and then fails **while the process is still in `ps`** | `detection-and-anti-analysis.md` §Step 3 Stage 0 — check for `D` in `/proc/<pid>/stat`, and attach a *different* pid as a one-line control before blaming the target |
+| The app exits with no tombstone, no crash and no ANR record | `detection-and-anti-analysis.md` §Step 3 — a clean self-exit means the check ran before your hooks existed; the branch conditions there say which Stage |
+| A dump region validates as the wrong thing, or an `r--s` view of `base.apk` looks like a dex | `advanced-unpacking.md` §What this route cannot do, and how to tell before you spend the window |
 | Feature-scoped network failure (login/register/pay) while the rest works | `tls-and-cert.md` — do not assume your patch caused it |
 | Everything works but **every signed request fails** after repack | `signature-derived-keys.md` |
-| A re-signed build **runs fine, renders its whole UI and logs no error — but one feature silently never loads**, and `dumpsys`/DNS/logcat show **no request for it at all** (not a rejected request: *no request*) | `code-virtualization-and-custom-linkers.md` §what the native check actually reads — a client-side integrity gate is refusing **before** the request is built. This is *not* the row above: "sent and rejected" and "never sent" have different owners and different fixes |
+| A re-signed build **runs fine, renders its whole UI and logs no error — but one feature silently never loads**, and `dumpsys`/DNS/logcat show **no request for it at all** (not a rejected request: *no request*) | `code-virtualization-and-custom-linkers.md` §what the native check actually reads — refusing **before** the request is built. Not the row above: "sent and rejected" and "never sent" have different owners |
 | You cannot tell whether a missing feature is **your patch's fault or the target's own behaviour** | `long-task-discipline.md` §single-variable discipline. Run the **zero-change control through the same pipeline**, and the decisive variant: the unmodified original with the patch applied **in memory only**, same device, same network |
 | Under Frida `spawn`, the UI never appears — `mCurrentFocus` stays `null`, screenshots come back blank, the Activity stack never builds | `dynamic-frida.md` §spawn keeps the Activity stack down: write the patch into memory, **detach**, then start the Activity normally |
 | `frida-server` keeps disappearing mid-experiment, or the device reboots itself while you are working | `dynamic-frida.md` §when the ROM hunts your instrumentation |
@@ -326,9 +201,9 @@ unread in this repository.
 | You are about to discard a route as "blocked" | `packers.md` — re-read it before writing any route off; mis-attributed failures have removed viable routes for hours |
 | The task has run long and you are unsure what is already proven | `long-task-discipline.md` §keep a live record |
 | A dumped dex parses in full, the classes are all there, and most method bodies are `return-void` stubs or nop fills | `references/advanced-unpacking.md` — an extraction shell: measure the `stub%` with `scripts/dex_dump_validate.py` before trusting any of it, and know that recovering the bodies is a different route |
-| Your `frida` dump dies mid-write (`script has been destroyed`), or the process you are dumping keeps changing pid | `references/advanced-unpacking.md` §dumping when frida is refused. **Rule out the boring cause first**: a device under memory pressure reclaims and relaunches background processes with no instrumentation involved, and that is enough to kill a dump. Only a *stable* target that still refuses the dump is evidence about the target — reproduction on a second, idle device is what separates the two |
+| Your `frida` dump dies mid-write (`script has been destroyed`), or the process you are dumping keeps changing pid | `advanced-unpacking.md` §dumping when frida is refused — rule out memory pressure first; a reclaim-and-relaunch needs no instrumentation |
 | A repack is refused by several independent checks, or the build has to keep working through store updates | `references/lsposed-and-modules.md` — deliver a module instead of an APK; G1's form table says when |
-| A hook module is installed, enabled and scoped, yet its log tag never appears — and you are about to conclude it never ran | `references/lsposed-and-modules.md` §Deploy, enable, and verify — **the verdict from `logcat` alone has already been wrong once here**: on one ROM `logd` is broken and module output reaches only `/data/adb/lspd/log/modules_<ts>.log`, where nine successful injections were sitting while three `logcat` queries came back empty |
+| A hook module is installed, enabled and scoped, yet its log tag never appears — and you are about to conclude it never ran | `lsposed-and-modules.md` §Deploy, enable, and verify — **a `logcat`-only verdict has already been wrong here**: on one ROM `logd` is broken and output reaches only `/data/adb/lspd/log/modules_<ts>.log` |
 | A module's entry class is missing from its own dex (so it can never load), yet the package installs, enables and looks healthy | `references/lsposed-and-modules.md` — check `assets/xposed_init` against the dex's actual classes; installation is not evidence of anything |
 | You only need to **call** the target's own routine (sign, token, encrypt) rather than change the app | `references/emulation-and-rpc.md` — emulate it, or service-ify the live function over Frida RPC |
 | A native function is a many-thousand-line `switch` state machine, or the decompiler's output is meaningless | `references/native-dbi-and-deobfuscation.md` — OLLVM shapes, a Stalker trace, and how far a trace actually gets you |
@@ -336,6 +211,9 @@ unread in this repository.
 | The traffic is protobuf/gRPC/QUIC, or a proxy sees TLS but requests still fail on a Flutter app | `references/protocol-reverse.md` — schema-less protobuf, frame capture, and native-side pinning |
 | Userspace hooks land and the app still dies: the check reads `/proc/self/status` through a raw `svc`, or runs before `JNI_OnLoad` | `references/kernel-and-environment-hardening.md` — what the next layer up and down can actually do, and when to stop |
 | You must edit, repack, sign or inspect the APK **from the phone itself** | `references/on-device-tooling.md`, `scripts/mt_mcp_probe.py` |
+| A captured body decodes to nothing readable, or you cannot tell whether a length-delimited field is a string, a nested message or a packed array | `protocol-reverse.md`. Protobuf on the wire (measured) — run `scripts/protobuf_decode_raw.py`; the candidate list and its `tie:` lines are the answer |
+| Method bodies are present but decode as **private opcodes**, and you need the mapping rather than an explanation of why VMP is hard | `vmp-differential-analysis.md`, then `advanced-unpacking.md` for the shape diagnosis |
+| A store build arrives as `base.apk` + `split_config.*.apk`, or a rebuilt build is refused **as a set** although every file verifies on its own | `split-apk.md` — one keystore across every member for `pm install-multiple`, and check that a merge is legal before trusting a merged single APK |
 
 ## Gates — clear these before you patch, in order
 
@@ -392,71 +270,31 @@ compare against, and every later measurement is unfalsifiable.
 
 ## Start here: classify the target in thirteen questions
 
-Answer these before touching a tool. Every one of them changes the whole plan.
+**Answer these before touching a tool — all thirteen, in order. Each one changes the whole plan, and
+a wrong answer here does not fail loudly: it produces an artifact that builds, runs, and does the
+wrong thing.** The answer column names both the action and the file that owns the detail; load that
+file before acting on the question.
 
-1. **Is the app packed/hardened?** → `references/recon.md`
-   Read the manifest's `application android:name`. If it is a third-party shell class rather than the app's own Application, you have a packer and must handle it first.
-2. **Where does the behavior you want to change actually live?**
-   - Ad SDK (Pangle/GDT/AnyThink/Kuaishou/Baidu/Sigmob…) → usually **client-side and removable** → `references/ad-removal.md`
-   - **Server-issued config for UI the client renders** (launch screen, popup, announcement, tab set, sponsored card on a home feed) → **the client decides, the server supplies the data** → `references/server-config-and-updates.md` (this is the most common shape of "ad" in a modern app, and there is no SDK to find — decide this question early, because hunting an SDK that does not exist costs hours)
-   - Membership / VIP / paid content → **usually server-authorized, client patch is cosmetic** → `references/membership-and-limits.md` (read this *before* spending hours)
-   - Feature flag, UI gate, debug switch → usually client-side
-   - Anything decided by an API response → server-side → `references/server-api.md`
-3. **Is the app's own code in plain dex, or moved to native/Flutter/Unity?**
-   Plain dex → you can patch. Flutter (`libflutter.so` + `libapp.so`) / Unity (`libil2cpp.so`) / pure native → different toolchain entirely. See `references/recon.md` §Where does the app's own code live and `references/framework-runtimes.md`.
-      **Runtime check (cheap -- do it before committing to a layer):** hook the obvious Java classes for the UI you care about, then reproduce that UI. If those hooks fire, the behavior is Java-owned. If they fire **zero times** while the UI is plainly on screen, the behavior is drawn by the runtime or by native code, and a dex-only plan will stall. Do not keep hunting in dex after a zero-hit probe -- that is the most expensive wrong turn in this skill's history.
-4. **What must the deliverable be able to do?** Write the answer as a testable sentence before
-   planning anything, then re-read it at every checkpoint. This is the drift guard, and the drift it
-   guards against is the most expensive one in this skill: a runtime-only result (a data edit, a live
-   hook, a blocked hostname, a host proxy) can look like success while failing the actual requirement.
-   The axes that decide it: **privilege** (unrooted?), **modification form** (a rebuilt, installable
-   artifact, or is live instrumentation acceptable?), **ABI/device class**, **network** (must it work
-   online?), **persistence** (survives restart / upgrade / fresh install?), **distribution** (must the
-   shipped file be self-contained?). → `references/long-task-discipline.md` §the most expensive drift.
-   **If the evidence already shows a deep extraction shell, a VMP, or more than one independent
-   integrity check, re-answer this question against G1's four forms** — the repack column may be
-   blocked rather than expensive, and the answer may be a module, an RPC service, or a report.
-5. **Does the app verify its own signature, or does the server?**
-   App-side → you must bypass it. Server-side → re-signing silently breaks the app later. See `references/repack-and-sign.md` and `references/server-api.md`.
-6. **What is your device situation?** → `references/environment.md`
-   Rooted real device (best), emulator with root, or no device (static only). Also: this determines whether Frida is usable. **Run `scripts/preflight.py` before your first experiment**, and again whenever a failure surprises you — device state, a dead device server, a leftover proxy, and clock drift all masquerade as a broken patch (`pitfalls.md` P9).
-7. **Which architecture is actually executing?** → `references/native-and-so.md` §Cross-architecture
-   `getprop` reports what the device claims and `primaryCpuAbi` reports what the package manager chose — neither is what is running. Only the live mapping is ground truth (`scripts/lib_map.py`). If the library you meant to patch is not mapped, a translator is in play, or the ABI differs from your assumption, that changes the plan more than any patch will.
-8. **Is one *specific feature* failing at runtime — login, registration, payment, an API-backed screen — while the rest of the app works?**
-   → `references/tls-and-cert.md`. A feature-scoped network failure is very often a **TLS/certificate problem on one code path**, not a consequence of your patch. The app can even carry two independent trust chains, so "other requests work" proves nothing. Rule this out in minutes before hunting for a signature check.
-9. **Was the input a build you did not produce** (a "cracked"/"modded" APK circulating online)?
-   → `references/third-party-builds.md`. Audit it before adopting it: such builds are frequently re-protected (sometimes with *more* layers than the original) and may carry injected components or endpoints. Never use one as a patching workbench.
+| # | Question | What the answer changes | Load |
+|---|---|---|---|
+| 1 | **Is the app packed/hardened?** Read the manifest's `application android:name` | A third-party shell class rather than the app's own Application means you have a packer and must handle it **first** | `recon.md` |
+| 2 | **Where does the behaviour actually live?** — ad SDK · **server-issued config for client-rendered UI** · membership/VIP · feature flag or debug switch · anything decided by an API response | Client-side and removable, versus server-supplied data the client decides with, versus server-authoritative where a client patch is cosmetic. **Decide this early**: hunting an ad SDK that does not exist costs hours, and the server-config shape has no SDK to find | `ad-removal.md`, `server-config-and-updates.md`, `membership-and-limits.md`, `server-api.md` |
+| 3 | **Is the app's own code in plain dex, or moved to native / Flutter / Unity?** | Which toolchain the whole task uses. **Cheap runtime check before committing:** hook the obvious Java classes for the UI you care about and reproduce that UI. Hooks that fire mean Java owns it; hooks that fire **zero times** while the UI is plainly on screen mean the runtime or native code draws it, and a dex-only plan will stall. Do not keep hunting in dex after a zero-hit probe — the most expensive wrong turn in this skill's history | `recon.md` §Where does the app's own code live, `framework-runtimes.md` |
+| 4 | **What must the deliverable be able to do?** Write it as a testable sentence and re-read it at every checkpoint | The most expensive drift in this skill: a runtime-only result (data edit, live hook, blocked hostname, host proxy) looks like success while failing the requirement. The axes: **privilege** (unrooted?), **modification form** (rebuilt artifact vs live instrumentation), **ABI/device class**, **network**, **persistence**, **distribution** (self-contained?). If the evidence already shows a deep extraction shell, a VMP, or more than one independent integrity check, **re-answer against G1's four forms** — the repack column may be blocked, not expensive | `long-task-discipline.md` §the most expensive drift |
+| 5 | **Does the app verify its own signature, or does the server?** | App-side means you must bypass it; server-side means re-signing silently breaks the app later | `repack-and-sign.md`, `server-api.md` |
+| 6 | **What is your device situation?** — rooted real device, rooted emulator, or no device | Whether Frida is usable at all, and whether the deliverable can be tested where it will run. **Run `scripts/preflight.py` before your first experiment** and again whenever a failure surprises you — device state, a dead device server, a leftover proxy and clock drift all masquerade as a broken patch | `environment.md`, `pitfalls.md` P9 |
+| 7 | **Which architecture is actually executing?** | `getprop` reports what the device claims and `primaryCpuAbi` what the package manager chose — **neither is what runs**. Only the live mapping is ground truth. An unmapped library, a translator in play, or a different ABI than assumed changes the plan more than any patch will | `native-and-so.md` §Cross-architecture, `scripts/lib_map.py` |
+| 8 | **Is one *specific* feature failing at runtime** (login, registration, payment, an API-backed screen) while the rest works? | A feature-scoped network failure is very often a **TLS/certificate problem on one code path**, not your patch. An app can carry two independent trust chains, so "other requests work" proves nothing. Rule this out in minutes before hunting a signature check | `tls-and-cert.md` |
+| 9 | **Was the input a build you did not produce** (a circulating "cracked"/"modded" APK)? | Such builds are frequently re-protected — sometimes with *more* layers than the original — and may carry injected components or endpoints. **Never use one as a patching workbench** | `third-party-builds.md` |
+| 10 | **Does the client sign its requests with its own signing certificate?** | Grep for `toCharsString()` / `signatures[0]` / `getPackageInfo(..., 64)` **before the first repack**. If that value feeds a native HMAC/DES routine, the rebuilt APK must hardcode the *original* certificate value at every read site, or every signed request fails while the app still launches and looks healthy. The single most expensive silent failure in a repack, and 15 minutes of grep prevents it | `signature-derived-keys.md` |
+| 11 | **Does the app die on its own after a while** — no Java stack, or a native crash that looks like a bug? | A hardened library rarely calls `kill`; it more often **arranges a fault** (load a small constant, use it as a pointer) so the death looks like an ordinary defect. Two rules before touching anything: **enumerate which mechanism actually fires** (signal and tombstone split them apart), and **neutralise by returning, never by making it not return** — a spinning stub freezes the process and produces a symptom that looks nothing like the cause | `native-tamper-and-suicide.md` |
+| 12 | **Will this build still be usable in a week?** | Any version check, upgrade prompt or self-update path means an unpatched build can be switched off or replaced remotely. This is one or two edits and it decides whether the work is durable — part of the build, not a follow-up. Also check for a **hot-update / remote-config** channel, which restores removed behaviour with no version change at all | `updates-and-forced-upgrade.md` |
+| 13 | **Does the request touch sign-in or phone binding** ("no login required", "skip binding", "guest ok")? | Separating a **client-side gate** (patchable) from an **account-scoped resource** (the screen is empty because the server has no account to answer for — not patchable). Classify first; and **never fabricate a session** to satisfy a gate, which produces a state worse than being signed out | `account-gates.md` |
 
-   **Long-task rule:** if this is likely to run long, open `references/long-task-discipline.md` now
-   and keep its record updated as you go. Re-read the refuted-conclusions and dead-routes sections
-   before starting any new experiment. Losing earlier findings is the most expensive failure in this
-   skill, and it is entirely preventable.
-10. **Does the client sign its requests with its own signing certificate?**
-    → `references/signature-derived-keys.md`. Grep for `toCharsString()` / `signatures[0]` /
-    `getPackageInfo(..., 64)` **before the first repack**. If that value feeds a native HMAC/DES
-    routine, the rebuilt APK must hardcode the *original* certificate value at every read site, or
-    every signed request fails while the app still launches and looks healthy. This is the single
-    most expensive silent failure in a repack, and 15 minutes of grep prevents it.
-11. **Does the app die on its own after a while — with no Java stack trace, or with a native
-    crash that looks like a bug?**
-    → `references/native-tamper-and-suicide.md`. A hardened library that decides the build is
-    tampered rarely calls `kill`. It more often **arranges a fault** (load a small constant, use it
-    as a pointer) so the death looks like an ordinary defect, and the system then reports it as an
-    app "crash" or "abnormal" dialog. Two rules before you touch anything: **enumerate which
-    mechanism actually fires** (the signal and the tombstone split them apart), and **neutralise by
-    returning, never by making it not return** — a spinning stub freezes the process and produces a
-    symptom that looks nothing like the cause.
-12. **Will this build still be usable in a week?** → `references/updates-and-forced-upgrade.md`
-    If the app has any version check, upgrade prompt, or self-update path, an unpatched build can be
-    turned off remotely or replaced by the official package. This is one or two edits and it decides
-    whether the work is durable — do it as part of the build, not as a follow-up. Also check for a
-    **hot-update / remote-config** channel, which can restore behaviour you removed without any version
-    change at all.
-13. **Does the request touch sign-in or phone binding — "no login required", "skip binding", "guest ok"?**
-    → `references/account-gates.md`. The whole difficulty here is separating a **client-side gate**
-    (patchable) from an **account-scoped resource** (the screen is empty because the server has no
-    account to answer for — not patchable). Classify first; and never fabricate a session to satisfy a
-    gate, which produces a state worse than being signed out.
+**Long-task rule (a condition, not advice):** if this is likely to run long, open
+`references/long-task-discipline.md` **now** and keep its record updated as you go. Re-read its
+refuted-conclusions and dead-routes sections before starting any experiment. Losing earlier findings
+is the most expensive failure in this skill, and it is entirely preventable.
 
 ## The workflow, end to end
 
@@ -531,110 +369,40 @@ These are moments where continuing to push forward is the wrong move. Each has c
 
 ## Non-negotiable constraints
 
-- **Read-only inputs.** Keep the original APK/dex untouched; work on copies. Always keep a known-good baseline to diff against.
-- **One variable at a time.** If you change two things and it breaks, you learn nothing. Build a control (same pipeline, zero patches) and compare.
-- **Verify structure after every dex edit.** `scripts/dex_classdiff.py` must report zero differences in class set and access flags for classes you did not intend to change.
-- **Do not patch a method that is widely shared.** Before patching any helper, count its callers (`scripts/find_refs.py`). A `Long.valueOf` wrapper with 30 callers is not an ad-specific hook.
-- **Do not make an API fail to suppress a UI element.** A 404/400 on an endpoint that other features depend on takes the whole screen down with it. Suppress at the data-consumption or render layer instead.
-- **Neutralise a native terminate path by returning, never by making it not return.** A stub, stub patch, or function entry replaced with a spin or a self-branch does not suppress the check — it freezes the caller, holding whatever lock it had, and unrelated threads wedge behind it. The symptom (a hang, an external kill, a restart loop) looks nothing like the cause, and there is no crash record to explain it. Return a benign value, and prefer success (0) over failure (-1). Never touch the ordinary-path symbols (`pthread_exit`, `exit`, `abort`, `snprintf`, `closedir`). `references/native-tamper-and-suicide.md`
-- **Look before you conclude — and look while you wait.** Execute, capture, and **inspect**; do not drive and sleep blind. A screen that is actually looked at answers in one step what coordinate-guessing cannot answer in five: the layout moved, a different dialog is up, a countdown is frozen, the text on screen says exactly why. Where the thing you are waiting on is visible, a sample you can inspect beats a duration you hoped was right, and byte-identical samples mean nothing is going to change. `scripts/snap.py`; `references/environment.md` §look at the screen.
-- **Put a timeout on every command, and calibrate it from measurement.** An unbounded call turns a stall into "the task stopped making progress", which is indistinguishable from slow work and costs hours silently. Time the operation once, record it, then derive the bound from it — that is what makes slow and hung distinguishable. A deadline that passes is a measurement, not a verdict. `references/long-task-discipline.md` §bound every wait.
-- **Every claim needs evidence.** "Probably", "should be", "in theory" are not findings. Either you observed it, or you label it unverified.
-   - **"Done" means the user-visible outcome**, not an internal signal. A blocking dialog still on screen means the task is not done, however many errors disappeared from the log. Absence of a log line is absence of evidence, never evidence of success.
-   - **Do not discard a route on compound evidence.** If a failure followed two simultaneous changes, the attribution is a hypothesis, not a finding. Re-run it single-variable before writing the route off -- mis-attributed failures have removed viable approaches for a long time.
-   - **Prove the device changed before measuring.** Install success describes the request, not the app on disk. Confirm the artifact actually advanced, or every following observation describes the previous build.
-- **Attribute a failure to the right layer before patching again.** When something stops working after a rebuild, first check whether the **unmodified original** fails the same way on the same device and network. Feature-scoped network failures in particular are frequently the app's own TLS/certificate problem (`references/tls-and-cert.md`); chasing a signature check that does not exist burns hours.
+**These are defects when violated, not preferences.** Each row states the check that catches it, so
+"did I comply" is a command you can run rather than a judgement you make about yourself.
 
-## Reference index
+| Constraint | Why it is absolute | The check |
+|---|---|---|
+| **Inputs are read-only.** Work on copies; keep a known-good baseline | an edited original destroys the only reference you can diff against | `git`/hash the original before the first edit; `scripts/apk_diff.py` for entry-level proof |
+| **One variable at a time**, with a control build (same pipeline, **zero** patches) | a compound change that fails teaches nothing, and the failure will be attributed to the wrong cause | a control run exists and its result is recorded |
+| **Verify structure after every dex edit** | a patch that assembles and dies at load looks like a patch that worked | `scripts/dex_classdiff.py`: zero differences in class set and access flags for classes you did not intend to change |
+| **Never patch a widely shared method.** Count callers first | a `Long.valueOf`-shaped helper with 30 callers is not an ad-specific hook | `scripts/find_refs.py` on the method you are about to touch |
+| **Never make an API fail to suppress a UI element** | a 404/400 an endpoint's other features depend on takes the whole screen with it — measured as a build that never leaves the launch screen | suppress at the data-consumption or render layer instead; if a request's path changes, that is the bug |
+| **Neutralise a native terminate path by returning, never by making it not return** | a spin stub freezes the caller **holding its lock**; unrelated threads wedge and the symptom (hang, external kill, restart loop) looks nothing like the cause, with no crash record | return a benign value, prefer success (`0`) over failure (`-1`), never touch `pthread_exit`/`exit`/`abort`/`snprintf`/`closedir`. `native-tamper-and-suicide.md` |
+| **Look before you conclude, and look while you wait** | a screen that is actually looked at answers in one step what coordinate-guessing cannot answer in five | capture **and inspect**; byte-identical samples mean nothing will change. `scripts/snap.py`, `environment.md` §look at the screen |
+| **Bound every command, and calibrate the bound from a measurement** | an unbounded call turns a stall into "still working", which is indistinguishable from progress | time the operation once, record it, derive the deadline from it. `long-task-discipline.md` §Bound every wait |
+| **Every claim carries a label — `observed`, `inferred` or `unverified`** | "probably", "should be" and "in theory" are not findings, and an unlabelled guess propagates as a fact | `observed` requires a command **and its output**; nothing else may be written as established |
+| **"Done" means the user-visible outcome** | a blocking dialog still on screen means the task is not done, however clean the log is | §What "done" means, all six items; absence of a log line is never evidence of success |
+| **Never discard a route on compound evidence** | if a failure followed two simultaneous changes, the attribution is a hypothesis — mis-attributed failures have removed viable routes for hours | re-run the abandonment single-variable before writing it down |
+| **Prove the device changed before measuring anything** | install success describes the *request*, not the app on disk | hash the on-device artifact against your build; otherwise every later observation describes the previous build |
+| **Attribute a failure to the right layer before patching again** | a feature-scoped network failure is frequently the app's own TLS/certificate problem, and chasing a signature check that does not exist burns hours | run the **unmodified original** on the same device and network first (`tls-and-cert.md`) |
 
-Load only what the current step needs.
+## Reference index and script index
 
-| File | Load when |
-|---|---|
-| `references/recon.md` | Starting any new sample; identifying packer, SDKs, code location, ABI |
-| `references/server-config-and-updates.md` | **The launch screen, a popup or the tab set is server-sent**; no ad SDK was found; a removed promo came back; anything controlled by a `*Config`/`*Popup` DTO with an `enabled` flag |
-| `references/byte-level-patching.md` | You want to change behaviour by editing a few bytes rather than rebuilding a method — equal-length patches, locating an instruction's exact offset, dex header integrity fields, branch polarity, verifier legality |
-| `references/packers.md` | The app is packed/hardened, or an edit makes it die before your code runs. Also load before discarding any route as "blocked by the shell" |
-| `references/code-virtualization-and-custom-linkers.md` | **No packer, dex is readable, and a re-signed build still dies** — whole classes turned into `native` declarations, a private loader with a mismatched SONAME, an embedded self-decrypting payload, or a Java-layer "signature killer" that logs success while a native check kills you. Covers the keep-it/drop-it deadlock and the string-redirect escape |
-| `references/framework-runtimes.md` | The UI is not native (Flutter / React Native / Unity / Cordova), or Java-layer hooks fire zero times while the UI clearly works |
-| `references/dart-aot.md` | The logic lives in a Dart AOT snapshot (`libapp.so`): pinning the Dart version, building a matching decompiler, the object pool and reference indexing, register/boolean conventions, locating and patching Dart code |
-| `references/native-and-so.md` | Patching in a `.so`, needing code to run before the app's own code, hand-built native payloads that crash inside the linker, or **deciding which library/ABI is actually loaded and executing** |
-| `references/native-tamper-and-suicide.md` | The process dies on its own (no Java stack, or a native crash that looks like a bug); you are about to neutralise a `kill`/`exit`/`abort` path; or a hardened library's sections/function boundaries look wrong |
-| `references/detection-and-anti-analysis.md` | The app fights back: it dies after you attach, refuses to run on your device, detects root/hook/debugger, or your dynamic tool simply does not work in this environment. **Read the first section before escalating** — the right answer is usually to switch to static, not to fight the detector |
-| `references/toolchain.md` | Choosing or invoking tools, something is not installed (including "not on PATH but present on disk"), a tool's output smells wrong, or you need to know which tools exist only as a GUI |
-| `references/ad-removal.md` | Task involves ads, trackers, sponsored cards, splash/interstitial/reward |
-| `references/updates-and-forced-upgrade.md` | The patched build must **keep working over time**; the app has any version check, forced-upgrade dialog, self-update installer, or hot-update/resource channel. Load this for essentially every build you intend to ship. |
-| `references/account-gates.md` | Task mentions "no login required", "don't force sign-in", "skip phone binding", "guest mode"; or a screen/feature is unreachable signed-out. Also load before promising that an account-scoped screen will show anything |
-| `references/membership-and-limits.md` | Task involves VIP, subscription, paid content, unlock, "fully cracked" |
-| `references/server-api.md` | The behavior is decided by a response, or you need to know if a patch can even matter |
-| `references/dex-patching.md` | Any actual editing of dex/smali, choosing a patch layer, choosing a tool |
-| `references/patch-audit.md` | Proving a patch **landed**, or that it is **legal**: length-vs-bytes comparison, the equal-length blind spot, verifier-level legality (`move-result*` adjacency), text-matching patch traps, and how to report a missing patch |
-| `references/repack-and-sign.md` | Rebuilding, signing, installing, or a repacked app misbehaves |
-| `references/signature-derived-keys.md` | The app reads `signatures[0]`/`toCharsString()`, or a rebuilt APK installs and runs but every signed request fails (`sign`/`_p`/`uth` empty or `-1`) |
-| `references/runtime-data.md` | Local state matters: DataStore, SharedPreferences, SQLite, protobuf caches, tokens — **or your data edit keeps being reverted, or a stored value looks encrypted** |
-| `references/dynamic-frida.md` | Frida setup, hooking strategy, tracing caller chains, finding the real call site |
-| `references/environment.md` | Device/emulator setup, root, ADB, networking, offline devices, emulator console control and recovery, **the preflight check to run before every experiment block** |
-| `references/verification.md` | Defining what "done" means; building the evidence chain |
-| `references/tls-and-cert.md` | One feature fails at runtime (login, registration, payment, an API-backed screen) while the rest of the app works |
-| `references/third-party-builds.md` | The input is a "cracked"/"modded" build you did not produce — audit it before trusting it |
-| `references/long-task-discipline.md` | The task will run long, or you are resuming one. Live record, conclusion grading, drift checkpoints, **deliverable-form drift (rooted-only vs shippable)**, bound-your-waits, **captures-you-never-looked-at**, **long-context decay**, handover |
-| `references/pitfalls.md` | Always worth a skim before building. This is the failure catalogue. |
-| `references/advanced-unpacking.md` | **The dump landed but the method bodies are empty** (an extraction shell), or bodies decode as private opcodes (a real VMP). Measuring the stub ratio, FART-style active invocation and why its classic hooks died on Android 12-16, code_item splicing, the root-side dump that does not need frida, and where recovery honestly stops |
-| `references/lsposed-and-modules.md` | The client-side logic is reachable but **a rebuilt APK is refused** (multi-point checks, shell self-verification), or the result only has to run on rooted devices you control: delivering a system-level hook module, its gradle-free build chain, scope configuration and verification, and the layer a Java module cannot reach |
-| `references/emulation-and-rpc.md` | You need to **call** a routine rather than change the app — a signing routine, a token, a cipher: emulated execution (Unidbg/Unicorn) with its environment-filling cost, versus service-ifying the live function over Frida RPC |
-| `references/native-dbi-and-deobfuscation.md` | A native function is an OLLVM state machine, or you need instruction-level execution evidence: Stalker traces, the trace-to-CFG route, the Stalker/QBDI/emulation decision, and the **measured** zero-event and crash boundaries |
-| `references/protocol-reverse.md` | The traffic is protobuf without a schema, gRPC, or QUIC/HTTP3; or a proxy sees TLS while the app still fails — schema recovery, frame capture, and native-side certificate pinning (Flutter/BoringSSL) with its boundaries |
-| `references/kernel-and-environment-hardening.md` | Userspace hooking provably cannot reach the check — raw `svc` syscalls, `init_array`-early detection, a ROM that hunts instrumentation: what each layer up and down can still do, the kernel-route map and its version gate, and when escalating is the wrong answer |
-| `references/on-device-tooling.md` | Working **from the phone itself**: MT Manager edit/repack/sign and its built-in APK MCP, LSPosed Manager, Termux+frida, and on-device data inspection |
+**Both tables live in `references/routing.md`** — one load gets you every reference file with when to
+load it, and every script with what it does. They are deliberately not duplicated here: this file is
+loaded in full every time the skill activates, and those two tables are about 140 rows of lookup data
+that nobody needs until they have already decided what to do.
 
-## Script index
+The symptom index above stays, because **symptom to file has to be one hop**: when something fails you
+are not choosing a file, you are recognising a failure, and a two-hop lookup at that moment is exactly
+how a stop signal gets skipped.
 
-All scripts are parameterized and path-agnostic; pass paths explicitly. Run `--help` or read the header of each.
+`references/evidence-summary.md` is the one reference that answers the claim-strength question from
+inside an installed copy: capability → one-line conclusion → `observed`/`inferred`/`unverified` → the
+evidence that ships with the skill. Load it when a claim's strength decides whether you trust it and
+the run record is not in front of you.
 
-| Script | Purpose |
-|---|---|
-| `scripts/doctor.py` | **Run this first.** Capability report and per-script runnability: which tools exist (including ones installed off-PATH or as `java -jar` jars), which scripts can actually run here, and the environment facts that silently poison experiments — clock skew, leftover `adb forward`/proxy, a device-side frida process already running |
-| `scripts/dexutil.py` | **Dependency-free dex reader**: structural walk + exact instruction decode with a verified format table, `fix_dex_header`/`verify_dex_header` (correct checksum/signature order), branch-target and operand helpers. The library the dex scripts below share; also runs standalone to dump one method with offsets |
-| `scripts/dex_find_insn.py` | Locate an instruction by **decoded semantics** and get its exact byte offset, with context and both sides of any branch. This is how you find a patch site without guessing offsets or scraping listings |
-| `scripts/dex_patch_bytes.py` | Apply **equal-length byte patches** from a JSON spec: matches by semantics, pins branch polarity via `expect_next`, enforces equal length, checks verifier legality, recomputes the dex header in the correct order, and re-decodes to prove the edit landed. `--dry-run` first |
-| `scripts/dex_check_verifier.py` | Tier-3 check: does any **conditional branch target a `move-result*`** (bypassing its producer, so the class fails to load)? Compares two builds and distinguishes pre-existing findings from regressions your patch introduced |
-| `scripts/coldstart.py` | Cold-launch an app and capture a **timed screenshot burst + logcat signals + installed-build facts + launch timing**, and warn when the foreground activity is not your app (a vendor installer left on screen is the classic cause of "evidence" that shows something else) |
-| `scripts/smtool.py` | baksmali/smali wrapper with a bundled classpath (assemble/disassemble dex) |
-| `scripts/patch_smali.py` | Method-body replacement in a smali tree, matched by signature |
-| `scripts/dex_strpatch.py` | Byte-level string constant patch with **string_ids ordering guard** |
-| `scripts/dex_classdiff.py` | Compare two dex class tables (set + access flags) to prove a patch was surgical |
-| `scripts/dex_strings.py` | Dump/extract strings and endpoints from dex without a decompiler |
-| `scripts/dart_pprefs.py` | Build/query the object-pool offset -> code-site index for a Dart AOT snapshot (arithmetic decode; seconds, not minutes) |
-| `scripts/dart_pool_strings.py` | Recover string literals from a Dart AOT snapshot: framed entries, the one-byte vs UTF-16 split, file offsets, and a run-length noise filter |
-| `scripts/dart_disasm.py` | Annotated windowed disassembly of Dart AOT code (pool + boolean annotations) plus a B/BL caller index |
-| `scripts/find_refs.py` | Count and list callers of a method/field (blast-radius check). Takes a smali tree, a `.dex`, a directory of either, or an `.apk`. Always prints what it scanned, so "the input was unreadable" cannot be mistaken for "nothing references it" |
-| `scripts/repack.py` | Rebuild an APK with replaced dex, strip only signatures, keep `META-INF/services/`, **write a 4-byte-aligned archive** (`resources.arsc` STORED+aligned, which Android R+ refuses to install without), sign, and verify |
-| `scripts/dexpatch/` | dexlib2 method-level rewriter (for changes that genuinely need new instructions) + build notes |
-| `scripts/devsh.py` | Quoting-safe ADB shell helper for rooted devices |
-| `scripts/usb_net_proxy.py` | Give an offline device network over USB (adb reverse + local proxy) |
-| `scripts/datastore_inject.py` | Encode/inject AndroidX DataStore preferences (protobuf) safely |
-| `scripts/probe_api.py` | Probe an app's HTTP API with correct headers, report status/shape |
-| `scripts/install_test.py` | Install a build and run a launch/health check with logcat signal extraction |
-| `scripts/frida_probe.js` | Four-layer runtime probe: app network layer + OkHttp + java.net + swallowed exception messages |
-| `scripts/run_probe.py` | Inject a probe, stream it to a timestamped log file, stay resident while you operate the app |
-| `scripts/tls_check.py` | Strict certificate check for one or more hosts (expired / wrong host / untrusted CA) |
-| `scripts/preflight.py` | Read-only environment check before every experiment block: device, root, ABI/translation, clock skew, leftover proxy/forwards, dead device server. Run this before blaming a patch. |
-| `scripts/lib_map.py` | What is **actually mapped** into a live process: per-library path, base, architecture (`ELF e_machine`), and classification (system / from-APK / runtime-materialized). Answers "which library and which ABI is really executing". |
-| `scripts/elf_plt.py` | Resolve a PLT stub to its imported symbol on x86_64 and aarch64 (from the **relocation table**, not from position or a comment), list a symbol's callers, and **byte-diff two libraries naming the symbol each changed stub belongs to**. Run this before patching any stub, and to audit a patch set you inherited. |
-| `scripts/so_constpatch.py` | Same-length in-place rewrite of an isolated string constant, for **redirecting a library load instead of defeating a check** (`System.loadLibrary("checker")` -> a library that is already mapped). Enforces equal length, refuses to touch a substring of a longer identifier, reports whether each hit sits in a constant pool, and patches inside an APK or a bare `.so`. See `references/code-virtualization-and-custom-linkers.md`. |
-| `scripts/apk_diff.py` | Entry-level diff of two APKs: what changed, what was **added** (injection candidates), what was removed — by content hash, so same-size replacements are caught. Use it to audit a third-party build and to prove your own build was surgical. |
-| `scripts/native_crash.py` | Locate a native death from a logcat capture or tombstone: signal, fault address, register state, backtrace split into your libraries vs system, the faulting instruction — plus an explicit flag when the fault looks **arranged** rather than accidental. |
-| `scripts/grab_crash.py` | Recover a stack that a crash-reporter SDK swallowed, when the log shows the app died but prints no backtrace of its own. |
-| `scripts/blob_decode.py` | Decode an opaque stored value by searching the parameter space (base64/base64url/hex × rotation × deflate/zlib/gzip) instead of guessing, then re-encode an edited payload with the same parameters. |
-| `scripts/snap.py` | Bounded burst screenshot + control-tree capture, with a stall detector and an explicit verdict on whether the accessibility tree is usable at all. Use it so you *look* at the screen instead of driving blind. |
-| `scripts/sig_probe.py` | Find the exact `signatures[0].toCharsString()` value: offline candidate enumeration from an APK (`--apk`), or the authoritative value read from a live package (`--live`). Feed the result into the hardcoded constant described in `references/signature-derived-keys.md`. |
-| `scripts/spawn_patch_detach.py` | **Spawn under a Frida probe, then detach before driving the UI.** Under spawn mode the Activity stack often never comes up (`mCurrentFocus` stays `null`, screenshots blank); memory writes survive detach while hooks do not, so this ordering is what makes an in-memory patch observable. Use it whenever you need to *see* a build that only runs with a memory fix. |
-| `scripts/hook_patch_only.js` | The minimal probe for `spawn_patch_detach.py`: neutralise one native death site by offset and report `PATCHED`. Configure `MODULE_NAME`, `FILE_OFFSET`, `PATCH_BYTES`. The replacement must be an equal-length "recover the frame and return" epilogue, never a NOP in front of live code. |
-| `scripts/dex_dump_validate.py` | Dedupe, structurally validate and rank a directory of dumped dex images: sha256 grouping, header integrity (`dexutil.verify_dex_header`), classic-vs-extraction discrimination via the **trivial-body ratio**, package-prefix hits, ranking, `--json`. `--trim` accepts page-aligned captures (a `/proc/<pid>/mem` export always overruns the dex it holds), while a file *shorter* than its own `file_size` stays rejected |
-| `scripts/dex_mem_scan.py` | Search memory captures for embedded dex images (`dex\n03x`) and extract each at the size **its own header declares**: bounded chunked scanning for large regions, magic validation, sha256 dedupe, `--dump DIR`, `--keep-partial`. Use it when a packer keeps a decrypted dex in an anonymous mapping that no `maps` entry names; pair the output with `dex_dump_validate.py` |
-| `scripts/lsposed_scaffold.py` | Generate a minimal LSPosed/Xposed **module project skeleton**: manifest with the xposed meta-data, `assets/xposed_init`, the hook class, and build notes for a gradle-free toolchain (javac → d8 → aapt2 → zipalign → apksigner) |
-| `scripts/frida_rpc_serve.py` | Bridge a Frida script's `rpc.exports` to a local caller with reconnect handling, so a live native function can be **called** instead of reversed |
-| `scripts/rpc_template.js` | The editable companion to `frida_rpc_serve.py`: an `rpc.exports` skeleton plus a native-function call placeholder |
-| `scripts/stalker_trace.js` | Instruction-level tracing with Frida Stalker: configurable module/offset targets, trigger selection, the event stream, output-size rules, and `transform` customisation |
-| `scripts/stalker_report.py` | Reduce a `stalker_trace.js` log into block histograms and call sequences, and print an explicit diagnostic for the measured **zero-event** case |
-| `scripts/mt_mcp_probe.py` | Probe MT Manager's on-device APK MCP (Streamable HTTP, `127.0.0.1:8787/mcp`): JSON-RPC handshake plus grouped `mt_apk_*` tool inventory; prints start-it-by-hand instructions and exits 2 while the service is down |
+`python check_routing.py` checks that this file and `references/routing.md` still agree, that every
+reference file is named there, and that every script is named there. CI runs it.
